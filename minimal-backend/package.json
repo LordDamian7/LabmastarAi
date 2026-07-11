@@ -1,0 +1,11 @@
+{
+  "name": "minimal-json-backend",
+  "private": true,
+  "version": "1.0.0",
+  "type": "module",
+  "description": "Smallest possible backend: two JSON endpoints, zero dependencies.",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js"
+  }
+}
