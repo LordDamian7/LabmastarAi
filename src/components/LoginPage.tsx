@@ -94,7 +94,18 @@ export default function LoginPage({ onLoginSuccess, userEmailFromMetadata = "Cap
 
         {/* Primary Interactive Module Container */}
         <div className="bg-slate-900/80 border border-slate-800 rounded-2xl p-6 md:p-8 backdrop-blur-xl shadow-2xl relative">
-          
+
+          {/* Demo-mode disclosure: authentication is not real in this build.
+              Any email/password is accepted and the session lives only in this
+              browser's localStorage. Real auth is a planned enhancement. */}
+          <div className="mb-6 p-3.5 rounded-xl border border-amber-500/20 bg-amber-500/10 text-amber-300 text-xs flex items-start gap-2.5 font-mono">
+            <ShieldAlert className="w-4 h-4 flex-shrink-0 text-amber-400 mt-0.5" />
+            <span className="flex-1 leading-relaxed">
+              <strong className="font-bold">Demo mode.</strong> Sign-in is not secured yet &mdash; any email and
+              password will work, and your session is stored only in this browser. Don&rsquo;t enter a real password.
+            </span>
+          </div>
+
           <AnimatePresence mode="wait">
             {error && (
               <motion.div
@@ -112,34 +123,6 @@ export default function LoginPage({ onLoginSuccess, userEmailFromMetadata = "Cap
           {/* Form and Social Section */}
           <form onSubmit={handleSubmit} className="space-y-4">
             
-            {/* Quick-Access Pilot Login for Preview sandbox environments */}
-            <div className="p-3 bg-teal-500/5 hover:bg-teal-500/10 active:bg-teal-500/15 border border-teal-500/20 hover:border-teal-500/30 rounded-xl flex items-center justify-between gap-3 text-left transition-all cursor-pointer group"
-              onClick={() => {
-                setLoading(true);
-                setTimeout(() => {
-                  setLoading(false);
-                  onLoginSuccess({
-                    email: userEmailFromMetadata,
-                    name: "Captain Uzzi",
-                    photoUrl: "https://lh3.googleusercontent.com/a/default-user"
-                  });
-                }, 400);
-              }}
-            >
-              <div className="flex items-center gap-2.5 min-w-0">
-                <div className="h-7 w-7 rounded-lg bg-teal-500/10 text-teal-400 flex items-center justify-center font-bold text-xs flex-shrink-0 group-hover:scale-110 transition-transform">
-                  ⚡
-                </div>
-                <div className="min-w-0">
-                  <p className="text-[11px] font-extrabold text-teal-300 leading-tight">Instant Demo Bypass</p>
-                  <p className="text-[9px] font-mono text-slate-400 truncate">1-Click Sign-In ({userEmailFromMetadata})</p>
-                </div>
-              </div>
-              <span className="text-teal-400 group-hover:translate-x-0.5 transition-transform text-xs font-bold font-mono">
-                Launch &rarr;
-              </span>
-            </div>
-
             {/* Action State Tabs */}
             <div className="grid grid-cols-2 p-1 bg-slate-950/80 rounded-xl border border-slate-800 mb-2">
               <button

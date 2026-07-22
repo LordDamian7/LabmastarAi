@@ -73,55 +73,6 @@ const INITIAL_BADGES: Badge[] = [
   }
 ];
 
-// Safe Storage adapter protecting against Secure cross-origin iframe storage restrictions
-const safeStorage = {
-  getItem: (key: string): string | null => {
-    try {
-      return window.localStorage.getItem(key);
-    } catch (e) {
-      console.warn("Storage access blocked inside sandboxed iframe context, using memory fallback.", e);
-      return (window as any).__memStorage?.[key] || null;
-    }
-  },
-  setItem: (key: string, value: string): void => {
-    try {
-      window.localStorage.setItem(key, value);
-    } catch (e) {
-      if (!(window as any).__memStorage) {
-        (window as any).__memStorage = {};
-      }
-      (window as any).__memStorage[key] = value;
-    }
-  },
-  removeItem: (key: string): void => {
-    try {
-      window.localStorage.removeItem(key);
-    } catch (e) {
-      if ((window as any).__memStorage) {
-        delete (window as any).__memStorage[key];
-      }
-    }
-  }
-};
-
-// Safe Dialog Wrappers safeguarding against DOM exceptions in secure iframes
-const safeConfirm = (message: string): boolean => {
-  try {
-    return window.confirm(message);
-  } catch (e) {
-    console.warn("window.confirm blocked in sandboxed iframe, auto-approving action for continuity:", message);
-    return true; // Auto-approve action in standard preview if dialogue is blocked
-  }
-};
-
-const safeAlert = (message: string): void => {
-  try {
-    window.alert(message);
-  } catch (e) {
-    console.warn("window.alert blocked in sandboxed iframe:", message);
-  }
-};
-
 export default function App() {
   const [activeTab, setActiveTab] = useState<"dashboard" | "exercises" | "chat">("dashboard");
   const [progress, setProgress] = useState<UserProgress | null>(null);
@@ -135,9 +86,9 @@ export default function App() {
   const [levelUpModal, setLevelUpModal] = useState<number | null>(null);
   const [newBadgeModal, setNewBadgeModal] = useState<Badge | null>(null);
 
-  // Initialize and load saved state from safeStorage
+  // Initialize and load saved state from localStorage
   useEffect(() => {
-    const savedUser = safeStorage.getItem("labmaster_user_v2");
+    const savedUser = localStorage.getItem("labmaster_user_v2");
     if (savedUser) {
       try {
         setCurrentUser(JSON.parse(savedUser));
@@ -146,7 +97,7 @@ export default function App() {
       }
     }
 
-    const savedProgress = safeStorage.getItem("labmaster_progress_v2");
+    const savedProgress = localStorage.getItem("labmaster_progress_v2");
     if (savedProgress) {
       try {
         setProgress(JSON.parse(savedProgress));
@@ -157,7 +108,7 @@ export default function App() {
       setupFreshRookie();
     }
 
-    const savedChats = safeStorage.getItem("labmaster_chats");
+    const savedChats = localStorage.getItem("labmaster_chats");
     if (savedChats) {
       try {
         setMessages(JSON.parse(savedChats));
@@ -177,13 +128,13 @@ export default function App() {
 
   const handleLoginSuccess = (userData: { email: string; name: string; photoUrl?: string }) => {
     setCurrentUser(userData);
-    safeStorage.setItem("labmaster_user_v2", JSON.stringify(userData));
+    localStorage.setItem("labmaster_user_v2", JSON.stringify(userData));
   };
 
   const handleLogout = () => {
-    if (safeConfirm("Disconnect and log out of this working clinical session?")) {
+    if (confirm("Disconnect and log out of this working clinical session?")) {
       setCurrentUser(null);
-      safeStorage.removeItem("labmaster_user_v2");
+      localStorage.removeItem("labmaster_user_v2");
     }
   };
 
@@ -208,13 +159,13 @@ export default function App() {
       ]
     };
     setProgress(fresh);
-    safeStorage.setItem("labmaster_progress_v2", JSON.stringify(fresh));
+    localStorage.setItem("labmaster_progress_v2", JSON.stringify(fresh));
   };
 
   // Synchronize state back onto client browser storage
   const syncProgress = (updated: UserProgress) => {
     setProgress(updated);
-    safeStorage.setItem("labmaster_progress_v2", JSON.stringify(updated));
+    localStorage.setItem("labmaster_progress_v2", JSON.stringify(updated));
   };
 
   const handleSendMessage = async (text: string) => {
@@ -230,7 +181,7 @@ export default function App() {
 
     const nextMessages = [...messages, userMsg];
     setMessages(nextMessages);
-    safeStorage.setItem("labmaster_chats", JSON.stringify(nextMessages));
+    localStorage.setItem("labmaster_chats", JSON.stringify(nextMessages));
     setIsGenerating(true);
 
     try {
@@ -255,7 +206,7 @@ export default function App() {
 
       const finalMessages = [...nextMessages, assistantMsg];
       setMessages(finalMessages);
-      safeStorage.setItem("labmaster_chats", JSON.stringify(finalMessages));
+      localStorage.setItem("labmaster_chats", JSON.stringify(finalMessages));
     } catch (err: any) {
       console.error(err);
     } finally {
@@ -264,9 +215,9 @@ export default function App() {
   };
 
   const clearChatHistory = () => {
-    if (safeConfirm("Reset conversation logs with Professor LabMaster?")) {
+    if (confirm("Reset conversation logs with Professor LabMaster?")) {
       setMessages([]);
-      safeStorage.removeItem("labmaster_chats");
+      localStorage.removeItem("labmaster_chats");
     }
   };
 
@@ -366,7 +317,7 @@ export default function App() {
     }
 
     setProgress(modifiedProgress);
-    safeStorage.setItem("labmaster_progress_v2", JSON.stringify(modifiedProgress));
+    localStorage.setItem("labmaster_progress_v2", JSON.stringify(modifiedProgress));
 
     // Claim exercise basic XP rewards
     handleIncrementXp(amount);
@@ -387,7 +338,7 @@ export default function App() {
       ...progress,
       dailyGoals: refilledGoals
     });
-    safeAlert("Daily Calibration Protocols have been manually recalculated & refreshed!");
+    alert("Daily Calibration Protocols have been manually recalculated & refreshed!");
   };
 
   if (!currentUser) {
@@ -406,7 +357,7 @@ export default function App() {
   }
 
   return (
-    <div className="min-h-screen bg-slate-950 font-normal selection:bg-teal-500 selection:text-slate-950 text-slate-100 flex flex-col antialiased">
+    <div className="min-h-screen bg-slate-950 font-normal select-none text-slate-100 flex flex-col antialiased">
       
       {/* Dynamic Upper Top Status Bar */}
       <div className="bg-slate-950 border-b border-slate-900/80 px-4 py-2.5">

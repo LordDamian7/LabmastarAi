@@ -199,156 +199,33 @@ export default function StatsDashboard({ progress, onClaimGoal, allBadges }: Sta
             </span>
           </div>
 
-          <div className="grid grid-cols-1 sm:grid-cols-12 gap-6 items-center">
-            {/* SVG Interactive Radar Chart left half */}
-            <div className="sm:col-span-5 flex flex-col items-center justify-center bg-slate-950 p-4 rounded-xl border border-slate-850">
-              <span className="text-[10px] font-mono text-slate-450 uppercase tracking-widest mb-2 font-bold">Diagnostic Star Chart</span>
-              <div className="relative w-[220px] h-[220px]">
-                <svg width="220" height="220" className="overflow-visible">
-                  <defs>
-                    <radialGradient id="radarGrad" cx="50%" cy="50%" r="50%">
-                      <stop offset="0%" stopColor="#14b8a6" stopOpacity="0.1" />
-                      <stop offset="100%" stopColor="#10b981" stopOpacity="0.45" />
-                    </radialGradient>
-                  </defs>
-
-                  {/* DRAW CONCENTRIC MESH PLANES */}
-                  {[20, 40, 60, 80, 100].map((level, lIdx) => {
-                    const points = Array.from({ length: 5 }).map((_, i) => {
-                      const angle = (i * 2 * Math.PI) / 5 - Math.PI / 2;
-                      const x = 110 + (level / 100) * 80 * Math.cos(angle);
-                      const y = 110 + (level / 100) * 80 * Math.sin(angle);
-                      return `${x},${y}`;
-                    }).join(" ");
-                    return (
-                      <polygon
-                        key={lIdx}
-                        points={points}
-                        className="fill-none stroke-slate-800/80 stroke-1"
+          <div className="space-y-4 h-[310px] overflow-y-auto pr-1">
+            {subjectMeters.map((sub, i) => {
+              const rating = getRating(sub.score);
+              return (
+                <div key={i} className="space-y-1.5 bg-slate-950 p-3 rounded-lg border border-slate-800/40">
+                  <div className="flex justify-between items-center">
+                    <span className="text-sm font-semibold text-slate-300 flex items-center gap-1.5">
+                      <span>{sub.icon}</span> {sub.name}
+                    </span>
+                    <span className={`text-[10px] font-mono font-bold px-2 py-0.5 rounded-full border ${rating.color}`}>
+                      {rating.title} ({sub.score}%)
+                    </span>
+                  </div>
+                  
+                  <div className="relative pt-1 flex items-center justify-between gap-3">
+                    <div className="h-2 flex-grow bg-slate-900 rounded-full overflow-hidden border border-slate-800">
+                      <motion.div 
+                        className={`h-full rounded-full ${sub.score >= 90 ? "bg-gradient-to-r from-emerald-500 to-green-400" : sub.score >= 70 ? "bg-gradient-to-r from-amber-500 to-yellow-400" : "bg-gradient-to-r from-teal-500 to-cyan-400"}`}
+                        initial={{ width: 0 }}
+                        animate={{ width: `${sub.score}%` }}
+                        transition={{ duration: 0.6, delay: i * 0.1 }}
                       />
-                    );
-                  })}
-
-                  {/* DRAW SPIDER AXIS LINES & LABELS */}
-                  {Array.from({ length: 5 }).map((_, i) => {
-                    const angle = (i * 2 * Math.PI) / 5 - Math.PI / 2;
-                    const axisX = 110 + 80 * Math.cos(angle);
-                    const axisY = 110 + 80 * Math.sin(angle);
-                    const labelX = 110 + 98 * Math.cos(angle);
-                    const labelY = 110 + 94 * Math.sin(angle) + 4; // slight offset adjustment
-                    const shortNames = ["CHEM", "HEMA", "MICRO", "BANK", "IMM"];
-                    const emojis = ["🧪", "🩸", "🧫", "💉", "🧬"];
-
-                    return (
-                      <g key={i}>
-                        {/* Axis Line */}
-                        <line
-                          x1="110"
-                          y1="110"
-                          x2={axisX}
-                          y2={axisY}
-                          className="stroke-slate-800 stroke-dashed"
-                        />
-                        {/* Label Text */}
-                        <text
-                          x={labelX}
-                          y={labelY}
-                          className="fill-slate-400 text-[10px] font-mono font-bold"
-                          textAnchor="middle"
-                        >
-                          {shortNames[i]}
-                        </text>
-                      </g>
-                    );
-                  })}
-
-                  {/* USER ACTIVE COMPETENCY COVERAGE AREA POLYGON */}
-                  {(() => {
-                    const scoresList = [
-                      progress.chemistryScore,
-                      progress.hematologyScore,
-                      progress.microbiologyScore,
-                      progress.bloodbankScore,
-                      progress.immunologyScore
-                    ];
-                    const activePath = Array.from({ length: 5 }).map((_, i) => {
-                      const angle = (i * 2 * Math.PI) / 5 - Math.PI / 2;
-                      const radius = (scoresList[i] / 100) * 80;
-                      const x = 110 + radius * Math.cos(angle);
-                      const y = 110 + radius * Math.sin(angle);
-                      return `${x},${y}`;
-                    }).join(" ");
-
-                    return (
-                      <polygon
-                        points={activePath}
-                        fill="url(#radarGrad)"
-                        stroke="#2dd4bf"
-                        strokeWidth="2"
-                        className="transition-all duration-700"
-                      />
-                    );
-                  })()}
-
-                  {/* PLOT VERTEX HIGHLIGHT GLOBULES */}
-                  {Array.from({ length: 5 }).map((_, i) => {
-                    const scoresList = [
-                      progress.chemistryScore,
-                      progress.hematologyScore,
-                      progress.microbiologyScore,
-                      progress.bloodbankScore,
-                      progress.immunologyScore
-                    ];
-                    const angle = (i * 2 * Math.PI) / 5 - Math.PI / 2;
-                    const radius = (scoresList[i] / 100) * 80;
-                    const x = 110 + radius * Math.cos(angle);
-                    const y = 110 + radius * Math.sin(angle);
-
-                    return (
-                      <circle
-                        key={i}
-                        cx={x}
-                        cy={y}
-                        r="3.5"
-                        className="fill-teal-400 stroke-slate-950 stroke-1 transition-all duration-700"
-                      >
-                        <title>{scoresList[i]}%</title>
-                      </circle>
-                    );
-                  })}
-                </svg>
-              </div>
-            </div>
-
-            {/* Subject meters right half */}
-            <div className="sm:col-span-7 space-y-3.5 max-h-[300px] overflow-y-auto pr-1">
-              {subjectMeters.map((sub, i) => {
-                const rating = getRating(sub.score);
-                return (
-                  <div key={i} className="space-y-1 bg-slate-950 p-2.5 rounded-lg border border-slate-800/40">
-                    <div className="flex justify-between items-center">
-                      <span className="text-xs font-bold text-slate-300 flex items-center gap-1.5">
-                        <span>{sub.icon}</span> {sub.name}
-                      </span>
-                      <span className={`text-[9px] font-mono font-black px-1.5 py-0.5 rounded border ${rating.color}`}>
-                        {rating.title} ({sub.score}%)
-                      </span>
-                    </div>
-                    
-                    <div className="relative pt-1 flex items-center justify-between gap-3">
-                      <div className="h-1.5 flex-grow bg-slate-900 rounded-full overflow-hidden border border-slate-800/60">
-                        <motion.div 
-                          className={`h-full rounded-full ${sub.score >= 90 ? "bg-gradient-to-r from-emerald-500 to-green-400" : sub.score >= 70 ? "bg-gradient-to-r from-amber-500 to-yellow-400" : "bg-gradient-to-r from-teal-500 to-cyan-400"}`}
-                          initial={{ width: 0 }}
-                          animate={{ width: `${sub.score}%` }}
-                          transition={{ duration: 0.6, delay: i * 0.1 }}
-                        />
-                      </div>
                     </div>
                   </div>
-                );
-              })}
-            </div>
+                </div>
+              );
+            })}
           </div>
         </div>
       </div>
@@ -399,123 +276,6 @@ export default function StatsDashboard({ progress, onClaimGoal, allBadges }: Sta
           })}
         </div>
       </div>
-
-      {/* Persistent Daily Goals Progress Bar Component */}
-      {(() => {
-        const totalGoals = progress.dailyGoals.length;
-        const completedGoals = progress.dailyGoals.filter(g => g.completed).length;
-        const progressPercentage = totalGoals > 0 ? Math.round((completedGoals / totalGoals) * 100) : 0;
-
-        // Dynamic status content
-        let statusTitle = "Daily Protocols Startup";
-        let statusDescription = "Begin performing clinical exercise tasks to populate completion metrics.";
-        let stateStyles = "from-teal-500 via-emerald-400 to-cyan-500 shadow-teal-500/10";
-        let badgeStyle = "text-teal-400 bg-teal-500/10 border-teal-500/20";
-
-        if (progressPercentage === 100) {
-          statusTitle = "🏆 Optimal Daily Calibration Met!";
-          statusDescription = "All clinical analyzer workflows and daily objectives are synchronized for peak performance.";
-          stateStyles = "from-emerald-400 via-teal-400 to-green-500 shadow-green-500/20";
-          badgeStyle = "text-emerald-400 bg-emerald-500/15 border-emerald-500/30 animate-pulse";
-        } else if (progressPercentage >= 66) {
-          statusTitle = "🧪 High compliance threshold";
-          statusDescription = "Analyzers are operating at near optimal efficiency. Complete remaining protocol targets.";
-          stateStyles = "from-cyan-400 via-teal-400 to-indigo-500 shadow-cyan-500/10";
-          badgeStyle = "text-cyan-400 bg-cyan-500/10 border-cyan-500/20";
-        } else if (progressPercentage > 0) {
-          statusTitle = "⚡ Active system calibration";
-          statusDescription = "Daily laboratory objectives are registering. Finalize and redeem tasks to calibrate systems.";
-        }
-
-        return (
-          <motion.div 
-            id="persistent-daily-goals-progress"
-            initial={{ opacity: 0, y: 15 }}
-            animate={{ opacity: 1, y: 0 }}
-            className="bg-slate-900 border border-slate-800 rounded-xl p-6 relative overflow-hidden shadow-xl"
-          >
-            {/* Ambient neon backdrop glow */}
-            <div className="absolute -bottom-8 -right-8 w-48 h-48 bg-teal-500/5 rounded-full blur-2xl pointer-events-none" />
-            
-            <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 mb-4">
-              <div className="space-y-1.5 flex-1">
-                <div className="flex items-center gap-2">
-                  <span className="text-xl">📊</span>
-                  <h3 className="font-sans font-black text-xs uppercase tracking-wider text-slate-100 flex items-center gap-2.5">
-                    Daily Calibration Progress Tracker
-                    <span className={`text-[9px] font-mono border px-2 py-0.5 rounded font-black ${badgeStyle}`}>
-                      {completedGoals} / {totalGoals} COMPLETED
-                    </span>
-                  </h3>
-                </div>
-                <div className="flex items-baseline gap-2">
-                  <span className="text-lg font-bold text-slate-100">{statusTitle}</span>
-                  <span className="text-xs text-slate-400 font-normal hidden sm:inline">— {statusDescription}</span>
-                </div>
-              </div>
-
-              {/* Visual percentage blob */}
-              <div className="flex items-center gap-3">
-                <div className="text-right">
-                  <span className="text-[10px] uppercase font-mono text-slate-450 block font-bold">Protocol Calibration Ratio</span>
-                  <span className="text-2xl font-mono font-black text-transparent bg-clip-text bg-gradient-to-r from-teal-400 to-emerald-400">
-                    {progressPercentage}%
-                  </span>
-                </div>
-                <div className="h-10 w-10 rounded-lg bg-slate-950 border border-slate-800 flex items-center justify-center text-xl font-mono font-bold text-teal-400 shadow-inner">
-                  🎯
-                </div>
-              </div>
-            </div>
-
-            {/* Neon glowing master progress track bar */}
-            <div className="relative">
-              <div className="h-4 w-full bg-slate-950 rounded-full overflow-hidden border border-slate-800 relative p-[2px]">
-                <motion.div 
-                  className={`h-full bg-gradient-to-r rounded-full shadow-lg ${stateStyles}`}
-                  initial={{ width: 0 }}
-                  animate={{ width: `${progressPercentage}%` }}
-                  transition={{ type: "spring", stiffness: 45, damping: 15 }}
-                />
-              </div>
-              
-              {/* Target division dashes */}
-              {totalGoals > 1 && Array.from({ length: totalGoals - 1 }).map((_, idx) => {
-                const markPct = ((idx + 1) / totalGoals) * 100;
-                return (
-                  <div 
-                    key={idx}
-                    className="absolute top-0 bottom-0 w-[2px] bg-slate-900 z-10"
-                    style={{ left: `${markPct}%` }}
-                  />
-                );
-              })}
-            </div>
-
-            {/* Quick-links list panel of targets */}
-            <div className="mt-4 grid grid-cols-1 sm:grid-cols-3 gap-2 bg-slate-950/40 p-3 rounded-lg border border-slate-850">
-              {progress.dailyGoals.map((g) => (
-                <div 
-                  key={g.id} 
-                  className="flex items-center gap-2 bg-slate-950/60 p-2 rounded border border-slate-850/50 text-xs text-slate-300"
-                >
-                  <span className="flex-shrink-0 text-base">{g.icon}</span>
-                  <span className="truncate flex-1 font-sans">{g.title}</span>
-                  {g.completed ? (
-                    <span className="text-[9px] font-mono text-emerald-400 font-bold bg-emerald-500/10 px-1.5 py-0.5 rounded border border-emerald-500/20">
-                      Calibrated
-                    </span>
-                  ) : (
-                    <span className="text-[9px] font-mono text-slate-450 bg-slate-900 px-1.5 py-0.5 rounded">
-                      {g.current}/{g.target}
-                    </span>
-                  )}
-                </div>
-              ))}
-            </div>
-          </motion.div>
-        );
-      })()}
 
       {/* Badge Detail Modal Dialog */}
       {selectedBadge && (

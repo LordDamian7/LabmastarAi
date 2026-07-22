@@ -1,6 +1,0 @@
-{
-  "name": "LabMaster AI",
-  "description": "An interactive, gamified AI learning tutorial for Medical Laboratory Science students featuring clinical cases, speech mode, and real-time guidance.",
-  "requestFramePermissions": ["microphone"],
-  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
-}
