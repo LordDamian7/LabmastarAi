@@ -3,7 +3,7 @@ import type { Request, Response, NextFunction } from "express";
 import { GoogleGenAI, Type } from "@google/genai";
 import { createClient, type SupabaseClient, type User } from "@supabase/supabase-js";
 import dotenv from "dotenv";
-import { PDFParse } from "pdf-parse";
+import type { PDFParse } from "pdf-parse";
 // @ts-ignore
 import mammoth from "mammoth";
 
@@ -205,8 +205,14 @@ app.post("/api/materials", requireUser, async (req: AuthedRequest, res) => {
     if (fileType === "pdf") {
       let parser: PDFParse | null = null;
       try {
+        // Loaded lazily: pdfjs needs the native @napi-rs/canvas polyfills (DOMMatrix etc.)
+        // at import time, and a failure there must not take down every other route.
+        // "pdf-parse/worker" installs those polyfills and its static import makes
+        // Vercel's bundler include the native module.
+        const { CanvasFactory } = await import("pdf-parse/worker");
+        const { PDFParse } = await import("pdf-parse");
         // pdf-parse v2 API: construct with { data }, then getText() -> { text, total }.
-        parser = new PDFParse({ data: new Uint8Array(fileBuffer) });
+        parser = new PDFParse({ data: new Uint8Array(fileBuffer), CanvasFactory });
         const parsed = await parser.getText();
         extractedText = parsed.text || "";
         pageCount = parsed.total || 1;
