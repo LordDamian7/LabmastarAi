@@ -1,5 +1,7 @@
 import React, { useState, useRef } from "react";
 import { StudyMaterial } from "../types";
+import { supabase, STUDY_BUCKET } from "../lib/supabase";
+import { apiFetch, apiError } from "../lib/api";
 import { 
   Upload, 
   FileText, 
@@ -15,13 +17,31 @@ import {
   Award
 } from "lucide-react";
 
+// Explicit content types: browsers report .md/.csv inconsistently, and the storage
+// bucket only accepts an allow-list of MIME types.
+const CONTENT_TYPES: Record<string, string> = {
+  pdf: "application/pdf",
+  docx: "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+  txt: "text/plain",
+  md: "text/markdown",
+  csv: "text/csv",
+  json: "application/json",
+  jpeg: "image/jpeg",
+  jpg: "image/jpeg",
+  png: "image/png",
+};
+
+const MAX_FILE_MB = 20;
+
 interface RAGStudyLibraryProps {
+  userId: string;
   studyMaterials: StudyMaterial[];
   onAddMaterial: (material: StudyMaterial) => void;
   onRemoveMaterial: (id: string) => void;
 }
 
 export default function RAGStudyLibrary({
+  userId,
   studyMaterials,
   onAddMaterial,
   onRemoveMaterial
@@ -66,76 +86,56 @@ export default function RAGStudyLibrary({
       return;
     }
 
-    if (file.size > 8 * 1024 * 1024) {
-      setErrorMsg("File exceeds the maximum 8MB size limit. Please upload a smaller study material.");
+    if (file.size > MAX_FILE_MB * 1024 * 1024) {
+      setErrorMsg(`File exceeds the maximum ${MAX_FILE_MB}MB size limit. Please upload a smaller study material.`);
       return;
     }
 
     setIsParsing(true);
     setUploadProgress(15);
 
+    const fileType = ["jpeg", "jpg", "png"].includes(ext) ? "image" : ext;
+    const safeName = file.name.replace(/[^a-zA-Z0-9._-]/g, "_");
+    const storagePath = `${userId}/${crypto.randomUUID()}-${safeName}`;
+
     try {
-      // 1. Read file as base64
-      const reader = new FileReader();
-      
-      const fileReadPromise = new Promise<{ base64: string; rawResult: string | ArrayBuffer | null }>((resolve, reject) => {
-        reader.onload = () => {
-          const resultStr = reader.result as string;
-          // Extract base64 part
-          const base64Str = resultStr.includes(";base64,") 
-            ? resultStr.split(";base64,")[1] 
-            : window.btoa(resultStr);
-          resolve({ base64: base64Str, rawResult: resultStr });
-        };
-        reader.onerror = (e) => reject(e);
-        
-        if (["jpeg", "jpg", "png"].includes(ext)) {
-          reader.readAsDataURL(file); // Images must have raw visual headers readable
-        } else {
-          reader.readAsDataURL(file); // Text / PDFs can also be read as Data URL for express parsing
-        }
-      });
+      // 1. Upload the original file straight to Supabase Storage. This bypasses the
+      //    serverless request-size cap, so large textbooks are fine.
+      const { error: uploadError } = await supabase.storage
+        .from(STUDY_BUCKET)
+        .upload(storagePath, file, { contentType: CONTENT_TYPES[ext], upsert: false });
+      if (uploadError) throw new Error(`Upload failed: ${uploadError.message}`);
 
-      setUploadProgress(40);
-      const { base64, rawResult } = await fileReadPromise;
-      setUploadProgress(65);
+      setUploadProgress(60);
 
-      // determine type
-      const fileType = ["jpeg", "jpg", "png"].includes(ext) ? "image" : ext;
-
-      // Send to server to parse
-      const response = await fetch("/api/parse-file", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          fileName: file.name,
-          fileType,
-          base64Data: base64
-        })
+      // 2. Ask the server to extract text and register the material.
+      const response = await apiFetch("/api/materials", {
+        fileName: file.name,
+        fileType,
+        fileSize: file.size,
+        storagePath
       });
 
       setUploadProgress(90);
 
       if (!response.ok) {
-        const errJson = await response.json();
-        throw new Error(errJson.error || "Failed to digest the clinical material.");
+        // Don't leave an orphaned file behind if parsing failed.
+        await supabase.storage.from(STUDY_BUCKET).remove([storagePath]);
+        throw await apiError(response, "Failed to digest the clinical material.");
       }
 
-      const outcome = await response.json();
-      
-      const newMaterial: StudyMaterial = {
-        id: `mat-${Date.now()}-${Math.floor(Math.random() * 1000)}`,
-        fileName: file.name,
-        fileType,
-        fileSize: file.size,
-        fullContent: fileType === "image" ? (rawResult as string) : outcome.extractedText,
-        summary: outcome.summary,
-        uploadedAt: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
-        pages: outcome.pageCount,
-        words: outcome.wordCount
-      };
-
-      onAddMaterial(newMaterial);
+      const { material } = await response.json();
+      onAddMaterial({
+        id: material.id,
+        fileName: material.file_name,
+        fileType: material.file_type,
+        fileSize: material.file_size,
+        storagePath: material.storage_path,
+        summary: material.summary,
+        uploadedAt: material.created_at,
+        pages: material.pages,
+        words: material.words
+      });
       setUploadProgress(100);
       
       // Flash a little success
@@ -228,7 +228,7 @@ export default function RAGStudyLibrary({
                 Drag & drop or <span className="text-teal-400 underline">browse files</span>
               </p>
               <p className="text-[10px] text-slate-400 mt-1 font-sans">
-                Supports **PDF, DOCX, TXT, MD, CSV, JSON** and **JPEG, JPG, PNG** (Max 8MB)
+                Supports **PDF, DOCX, TXT, MD, CSV, JSON** and **JPEG, JPG, PNG** (Max {MAX_FILE_MB}MB)
               </p>
             </div>
           </div>

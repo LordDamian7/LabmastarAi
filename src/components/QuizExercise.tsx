@@ -1,5 +1,6 @@
 import React, { useState } from "react";
 import { CaseStudy, GradingResult, StudyMaterial } from "../types";
+import { apiFetch, apiError } from "../lib/api";
 import { 
   Beaker, 
   HelpCircle, 
@@ -68,19 +69,16 @@ export default function QuizExercise({ onAwardXp, onIncrementGoal, studyMaterial
     }, 850);
 
     try {
-      const response = await fetch("/api/generate-exercise", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ 
-          category,
-          studyMaterials: useRagForCase ? studyMaterials : []
-        })
+      const response = await apiFetch("/api/generate-exercise", {
+        category,
+        materialIds: useRagForCase ? studyMaterials.map(m => m.id) : []
       });
-      if (!response.ok) throw new Error("Could not acquire diagnostic case.");
+      if (!response.ok) throw await apiError(response, "Could not acquire diagnostic case.");
       const data = await response.json();
       setCurrentCase(data);
-    } catch (err) {
+    } catch (err: any) {
       console.error(err);
+      alert(err.message || "Could not acquire diagnostic case.");
     } finally {
       clearInterval(logInterval);
       setIsLoading(false);
@@ -111,18 +109,14 @@ export default function QuizExercise({ onAwardXp, onIncrementGoal, studyMaterial
 
     setIsGrading(true);
     try {
-      const response = await fetch("/api/grade-exercise", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          scenario: currentCase.scenario,
-          questions: currentCase.questions,
-          rawLabData: currentCase.labData,
-          studentAnswers: userAnswers
-        })
+      const response = await apiFetch("/api/grade-exercise", {
+        scenario: currentCase.scenario,
+        questions: currentCase.questions,
+        rawLabData: currentCase.labData,
+        studentAnswers: userAnswers
       });
 
-      if (!response.ok) throw new Error("Grading cycle failed.");
+      if (!response.ok) throw await apiError(response, "Grading cycle failed.");
       const result: GradingResult = await response.json();
       setGradingResult(result);
 
@@ -135,8 +129,9 @@ export default function QuizExercise({ onAwardXp, onIncrementGoal, studyMaterial
       if (result.score >= 90) {
         onIncrementGoal("score_90");
       }
-    } catch (err) {
+    } catch (err: any) {
       console.error(err);
+      alert(err.message || "Grading cycle failed.");
     } finally {
       setIsGrading(false);
     }

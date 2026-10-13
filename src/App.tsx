@@ -1,5 +1,8 @@
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useRef } from "react";
+import type { Session } from "@supabase/supabase-js";
 import { UserProgress, Badge, DailyGoal, Message, StudyMaterial } from "./types";
+import { supabase, STUDY_BUCKET } from "./lib/supabase";
+import { apiFetch, apiError } from "./lib/api";
 import StatsDashboard from "./components/StatsDashboard";
 import QuizExercise from "./components/QuizExercise";
 import MLSProfessorChat from "./components/MLSProfessorChat";
@@ -73,49 +76,98 @@ const INITIAL_BADGES: Badge[] = [
   }
 ];
 
+// Which badge each exercise category unlocks.
+const CATEGORY_BADGE: Record<string, string> = {
+  chemistry: "chem_badge",
+  hematology: "hem_badge",
+  microbiology: "micro_badge",
+  bloodbank: "bb_badge",
+  immunology: "imm_badge"
+};
+
+const freshDailyGoals = (): DailyGoal[] => [
+  { id: "goal_quiz", title: "Solve a clinical lab specimen case", target: 1, current: 0, rewardXp: 50, completed: false, icon: "🔬" },
+  { id: "goal_chat", title: "Discuss 2 diagnostic concepts with Professor", target: 2, current: 0, rewardXp: 40, completed: false, icon: "💬" },
+  { id: "goal_perfect", title: "Achieve 90%+ in any clinical simulation", target: 1, current: 0, rewardXp: 60, completed: false, icon: "🏆" }
+];
+
+const freshProgress = (): UserProgress => ({
+  level: 1,
+  xp: 0,
+  xpNeededForNextLevel: 100,
+  streakCount: 4, // Nice pre-calibrated default values
+  lastDailyReset: new Date().toISOString(),
+  chemistryScore: 35,
+  hematologyScore: 25,
+  microbiologyScore: 40,
+  bloodbankScore: 20,
+  immunologyScore: 50,
+  unlockedBadges: [],
+  completedExercisesCount: 0,
+  dailyGoals: freshDailyGoals()
+});
+
+// Adds XP, rolling over as many levels as the amount covers.
+const applyXp = (p: UserProgress, amount: number): UserProgress => {
+  let xp = p.xp + amount;
+  let level = p.level;
+  let threshold = p.xpNeededForNextLevel;
+  while (xp >= threshold) {
+    xp -= threshold;
+    level += 1;
+    threshold = Math.round(threshold * 1.35); // level scalable limits
+  }
+  return { ...p, xp, level, xpNeededForNextLevel: threshold };
+};
+
 export default function App() {
   const [activeTab, setActiveTab] = useState<"dashboard" | "exercises" | "chat">("dashboard");
+  const [session, setSession] = useState<Session | null>(null);
+  const [authReady, setAuthReady] = useState(false);
   const [progress, setProgress] = useState<UserProgress | null>(null);
   const [messages, setMessages] = useState<Message[]>([]);
   const [studyMaterials, setStudyMaterials] = useState<StudyMaterial[]>([]);
   const [isGenerating, setIsGenerating] = useState(false);
   const [isSimulationMode, setIsSimulationMode] = useState(false);
-  const [currentUser, setCurrentUser] = useState<{ email: string; name: string; photoUrl?: string } | null>(null);
+  const [loadError, setLoadError] = useState<string | null>(null);
 
   // Gamified Milestones animations
   const [levelUpModal, setLevelUpModal] = useState<number | null>(null);
   const [newBadgeModal, setNewBadgeModal] = useState<Badge | null>(null);
 
-  // Initialize and load saved state from localStorage
+  // Last progress snapshot seen, used to detect level-ups/badges and skip redundant saves.
+  const lastProgressRef = useRef<UserProgress | null>(null);
+
+  const userId = session?.user.id ?? null;
+  const currentUser = session
+    ? {
+        email: session.user.email ?? "",
+        name: (session.user.user_metadata?.full_name as string | undefined) || (session.user.email ?? "").split("@")[0].toUpperCase()
+      }
+    : null;
+
+  // Track the Supabase auth session.
   useEffect(() => {
-    const savedUser = localStorage.getItem("labmaster_user_v2");
-    if (savedUser) {
-      try {
-        setCurrentUser(JSON.parse(savedUser));
-      } catch (e) {
-        setCurrentUser(null);
+    supabase.auth.getSession().then(({ data }) => {
+      setSession(data.session);
+      setAuthReady(true);
+    });
+    const { data: listener } = supabase.auth.onAuthStateChange((event, nextSession) => {
+      setSession(nextSession);
+      // Arrived from a "forgot passcode" email link: let the user choose a new one.
+      if (event === "PASSWORD_RECOVERY") {
+        setTimeout(async () => {
+          const newPassword = window.prompt("Choose a new passcode (at least 8 characters):");
+          if (!newPassword) return;
+          if (newPassword.length < 8) {
+            alert("Passcode must be at least 8 characters. Request another reset link to try again.");
+            return;
+          }
+          const { error } = await supabase.auth.updateUser({ password: newPassword });
+          alert(error ? `Could not update passcode: ${error.message}` : "Passcode updated.");
+        }, 0);
       }
-    }
-
-    const savedProgress = localStorage.getItem("labmaster_progress_v2");
-    if (savedProgress) {
-      try {
-        setProgress(JSON.parse(savedProgress));
-      } catch (e) {
-        setupFreshRookie();
-      }
-    } else {
-      setupFreshRookie();
-    }
-
-    const savedChats = localStorage.getItem("labmaster_chats");
-    if (savedChats) {
-      try {
-        setMessages(JSON.parse(savedChats));
-      } catch (e) {
-        setMessages([]);
-      }
-    }
+    });
 
     // Verify Gemini backend engine mode
     fetch("/api/status")
@@ -124,56 +176,123 @@ export default function App() {
         setIsSimulationMode(data.status === "simulation");
       })
       .catch(() => setIsSimulationMode(true));
+
+    return () => listener.subscription.unsubscribe();
   }, []);
 
-  const handleLoginSuccess = (userData: { email: string; name: string; photoUrl?: string }) => {
-    setCurrentUser(userData);
-    localStorage.setItem("labmaster_user_v2", JSON.stringify(userData));
+  // Load the signed-in user's progress, chat history, and study library.
+  useEffect(() => {
+    if (!userId) {
+      setProgress(null);
+      setMessages([]);
+      setStudyMaterials([]);
+      lastProgressRef.current = null;
+      return;
+    }
+    let cancelled = false;
+    (async () => {
+      setLoadError(null);
+      const [progressRes, chatRes, materialsRes] = await Promise.all([
+        supabase.from("user_progress").select("data").eq("user_id", userId).maybeSingle(),
+        supabase.from("chat_messages").select("id, role, content, created_at").order("created_at", { ascending: true }).limit(500),
+        supabase
+          .from("study_materials")
+          .select("id, file_name, file_type, file_size, storage_path, summary, pages, words, created_at")
+          .order("created_at", { ascending: false })
+      ]);
+      if (cancelled) return;
+      const failure = progressRes.error || chatRes.error || materialsRes.error;
+      if (failure) {
+        setLoadError(failure.message);
+        return;
+      }
+
+      let loaded = progressRes.data?.data as UserProgress | undefined;
+      if (!loaded) {
+        // First sign-in: carry over progress from the old browser-only version if present.
+        try {
+          const legacy = localStorage.getItem("labmaster_progress_v2");
+          loaded = legacy ? JSON.parse(legacy) : undefined;
+        } catch {
+          loaded = undefined;
+        }
+        loaded = loaded ?? freshProgress();
+        await supabase.from("user_progress").upsert({ user_id: userId, data: loaded });
+        try {
+          ["labmaster_progress_v2", "labmaster_chats", "labmaster_user_v2"].forEach(k => localStorage.removeItem(k));
+        } catch { /* storage unavailable */ }
+      }
+      if (cancelled) return;
+      lastProgressRef.current = loaded;
+      setProgress(loaded);
+
+      setMessages((chatRes.data || []).map(row => ({
+        id: row.id,
+        role: row.role as Message["role"],
+        content: row.content,
+        timestamp: new Date(row.created_at)
+      })));
+
+      setStudyMaterials((materialsRes.data || []).map(row => ({
+        id: row.id,
+        fileName: row.file_name,
+        fileType: row.file_type,
+        fileSize: row.file_size,
+        storagePath: row.storage_path,
+        summary: row.summary ?? undefined,
+        uploadedAt: row.created_at,
+        pages: row.pages ?? undefined,
+        words: row.words ?? undefined
+      })));
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [userId]);
+
+  // Persist progress whenever it changes (debounced), and surface level-ups / new badges.
+  useEffect(() => {
+    if (!progress || !userId) return;
+    const previous = lastProgressRef.current;
+    if (previous === progress) return;
+    lastProgressRef.current = progress;
+
+    if (previous) {
+      if (progress.level > previous.level) setLevelUpModal(progress.level);
+      const newBadgeId = progress.unlockedBadges.find(id => !previous.unlockedBadges.includes(id));
+      const newBadge = newBadgeId && INITIAL_BADGES.find(b => b.id === newBadgeId);
+      if (newBadge) setNewBadgeModal(newBadge);
+    }
+
+    const timer = setTimeout(() => {
+      supabase
+        .from("user_progress")
+        .upsert({ user_id: userId, data: progress, updated_at: new Date().toISOString() })
+        .then(({ error }) => {
+          if (error) console.error("Failed to save progress:", error.message);
+        });
+    }, 600);
+    return () => clearTimeout(timer);
+  }, [progress, userId]);
+
+  // All progress changes go through a functional update so back-to-back changes
+  // (e.g. XP award followed by goal increments) never overwrite each other.
+  const updateProgress = (fn: (p: UserProgress) => UserProgress) => {
+    setProgress(prev => (prev ? fn(prev) : prev));
   };
 
-  const handleLogout = () => {
+  const handleLogout = async () => {
     if (confirm("Disconnect and log out of this working clinical session?")) {
-      setCurrentUser(null);
-      localStorage.removeItem("labmaster_user_v2");
+      await supabase.auth.signOut();
     }
   };
 
-  const setupFreshRookie = () => {
-    const fresh: UserProgress = {
-      level: 1,
-      xp: 0,
-      xpNeededForNextLevel: 100,
-      streakCount: 4, // Nice pre-calibrated default values
-      lastDailyReset: new Date().toISOString(),
-      chemistryScore: 35,
-      hematologyScore: 25,
-      microbiologyScore: 40,
-      bloodbankScore: 20,
-      immunologyScore: 50,
-      unlockedBadges: [],
-      completedExercisesCount: 0,
-      dailyGoals: [
-        { id: "goal_quiz", title: "Solve a clinical lab specimen case", target: 1, current: 0, rewardXp: 50, completed: false, icon: "🔬" },
-        { id: "goal_chat", title: "Discuss 2 diagnostic concepts with Professor", target: 2, current: 0, rewardXp: 40, completed: false, icon: "💬" },
-        { id: "goal_perfect", title: "Achieve 90%+ in any clinical simulation", target: 1, current: 0, rewardXp: 60, completed: false, icon: "🏆" }
-      ]
-    };
-    setProgress(fresh);
-    localStorage.setItem("labmaster_progress_v2", JSON.stringify(fresh));
-  };
-
-  // Synchronize state back onto client browser storage
-  const syncProgress = (updated: UserProgress) => {
-    setProgress(updated);
-    localStorage.setItem("labmaster_progress_v2", JSON.stringify(updated));
-  };
-
   const handleSendMessage = async (text: string) => {
-    if (!text.trim() || !progress) return;
+    if (!text.trim() || !progress || !userId) return;
 
     // Build the user message object
     const userMsg: Message = {
-      id: `usr-${Date.now()}`,
+      id: crypto.randomUUID(),
       role: "user",
       content: text,
       timestamp: new Date()
@@ -181,168 +300,149 @@ export default function App() {
 
     const nextMessages = [...messages, userMsg];
     setMessages(nextMessages);
-    localStorage.setItem("labmaster_chats", JSON.stringify(nextMessages));
     setIsGenerating(true);
+    supabase.from("chat_messages").insert({ id: userMsg.id, user_id: userId, role: "user", content: text })
+      .then(({ error }) => { if (error) console.error("Failed to save message:", error.message); });
+
+    const assistantId = crypto.randomUUID();
+    let assistantText = "";
+    const showAssistant = (content: string) => {
+      setMessages(prev => {
+        const without = prev.filter(m => m.id !== assistantId);
+        return [...without, { id: assistantId, role: "assistant", content, timestamp: new Date() }];
+      });
+    };
 
     try {
-      const response = await fetch("/api/chat", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ 
-          messages: nextMessages.map(m => ({ role: m.role, content: m.content })),
-          studyMaterials: studyMaterials
-        })
+      const response = await apiFetch("/api/chat", {
+        messages: nextMessages.map(m => ({ role: m.role, content: m.content })),
+        materialIds: studyMaterials.map(m => m.id)
       });
 
-      if (!response.ok) throw new Error("Could not relay query to professor.");
-      
-      const payload = await response.json();
-      const assistantMsg: Message = {
-        id: `ast-${Date.now()}`,
-        role: "assistant",
-        content: payload.content,
-        timestamp: new Date()
-      };
+      if (!response.ok || !response.body) throw await apiError(response, "Could not relay query to professor.");
 
-      const finalMessages = [...nextMessages, assistantMsg];
-      setMessages(finalMessages);
-      localStorage.setItem("labmaster_chats", JSON.stringify(finalMessages));
+      // Render the reply as it streams in.
+      const reader = response.body.getReader();
+      const decoder = new TextDecoder();
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        assistantText += decoder.decode(value, { stream: true });
+        showAssistant(assistantText);
+      }
+      assistantText += decoder.decode();
+      showAssistant(assistantText);
+
+      if (assistantText.trim()) {
+        const { error } = await supabase
+          .from("chat_messages")
+          .insert({ id: assistantId, user_id: userId, role: "assistant", content: assistantText });
+        if (error) console.error("Failed to save reply:", error.message);
+      }
     } catch (err: any) {
       console.error(err);
+      // Shown in the chat but not saved, so a retry starts clean.
+      showAssistant(`⚠️ ${err.message || "Could not reach the professor. Please try again."}`);
     } finally {
       setIsGenerating(false);
     }
   };
 
-  const clearChatHistory = () => {
+  const clearChatHistory = async () => {
     if (confirm("Reset conversation logs with Professor LabMaster?")) {
+      const { error } = await supabase.from("chat_messages").delete().eq("user_id", userId);
+      if (error) {
+        alert(`Could not clear chat: ${error.message}`);
+        return;
+      }
       setMessages([]);
-      localStorage.removeItem("labmaster_chats");
     }
+  };
+
+  const handleRemoveMaterial = async (id: string) => {
+    const material = studyMaterials.find(m => m.id === id);
+    if (!material) return;
+    const { error } = await supabase.from("study_materials").delete().eq("id", id);
+    if (error) {
+      alert(`Could not remove file: ${error.message}`);
+      return;
+    }
+    setStudyMaterials(prev => prev.filter(m => m.id !== id));
+    const { error: storageError } = await supabase.storage.from(STUDY_BUCKET).remove([material.storagePath]);
+    if (storageError) console.error("Failed to delete stored file:", storageError.message);
   };
 
   const handleClaimGoalReward = (goalId: string) => {
-    if (!progress) return;
-
-    const goal = progress.dailyGoals.find(g => g.id === goalId);
-    if (!goal || goal.completed) return;
-
-    // Create shallow copies
-    const updatedGoals = progress.dailyGoals.map(g => {
-      if (g.id === goalId) {
-        return { ...g, completed: true };
-      }
-      return g;
+    updateProgress(p => {
+      const goal = p.dailyGoals.find(g => g.id === goalId);
+      if (!goal || goal.completed) return p;
+      const dailyGoals = p.dailyGoals.map(g => (g.id === goalId ? { ...g, completed: true } : g));
+      return applyXp({ ...p, dailyGoals }, goal.rewardXp);
     });
-
-    handleIncrementXp(goal.rewardXp, updatedGoals);
-  };
-
-  const handleIncrementXp = (amount: number, optionalGoalsOverride?: DailyGoal[]) => {
-    if (!progress) return;
-
-    let newXp = progress.xp + amount;
-    let currentLevel = progress.level;
-    let nextThreshold = progress.xpNeededForNextLevel;
-    let leveledUp = false;
-
-    while (newXp >= nextThreshold) {
-      newXp -= nextThreshold;
-      currentLevel += 1;
-      nextThreshold = Math.round(nextThreshold * 1.35); // level scalable limits
-      leveledUp = true;
-    }
-
-    const updatedProgress = {
-      ...progress,
-      xp: newXp,
-      level: currentLevel,
-      xpNeededForNextLevel: nextThreshold,
-      dailyGoals: optionalGoalsOverride || progress.dailyGoals
-    };
-
-    syncProgress(updatedProgress);
-
-    if (leveledUp) {
-      setLevelUpModal(currentLevel);
-    }
   };
 
   const handleIncrementGoalValue = (actionType: string) => {
-    if (!progress) return;
-
-    const mappedGoals = progress.dailyGoals.map(g => {
-      if (actionType === "chat_ask" && g.id === "goal_chat") {
-        return { ...g, current: Math.min(g.target, g.current + 1) };
-      }
-      if (actionType === "exercise_complete" && g.id === "goal_quiz") {
-        return { ...g, current: Math.min(g.target, g.current + 1) };
-      }
-      if (actionType === "score_90" && g.id === "goal_perfect") {
-        return { ...g, current: Math.min(g.target, g.current + 1) };
-      }
-      return g;
-    });
-
-    syncProgress({
-      ...progress,
-      dailyGoals: mappedGoals
-    });
+    const goalForAction: Record<string, string> = {
+      chat_ask: "goal_chat",
+      exercise_complete: "goal_quiz",
+      score_90: "goal_perfect"
+    };
+    const goalId = goalForAction[actionType];
+    if (!goalId) return;
+    updateProgress(p => ({
+      ...p,
+      dailyGoals: p.dailyGoals.map(g => (g.id === goalId ? { ...g, current: Math.min(g.target, g.current + 1) } : g))
+    }));
   };
 
-  const handleAwardXpOnExerciseScore = (amount: number, categoryKey: string, score: number) => {
-    if (!progress) return;
+  const handleAwardXpOnExerciseScore = (amount: number, categoryKey: string = "chemistry", score: number = 0) => {
+    updateProgress(p => {
+      const scoreKey = `${categoryKey}Score` as keyof UserProgress;
+      const originalScore = (p[scoreKey] as number | undefined) || 0;
+      const updated: UserProgress = {
+        ...p,
+        completedExercisesCount: p.completedExercisesCount + 1,
+        [scoreKey]: Math.max(originalScore, score)
+      };
 
-    // Update the targeted competency index score conditionally
-    const originalScore = (progress as any)[`${categoryKey}Score`] || 0;
-    const newSavedScore = Math.max(originalScore, score);
-
-    // Collect score adjustments
-    const modifiedProgress: any = {
-      ...progress,
-      completedExercisesCount: progress.completedExercisesCount + 1,
-      [`${categoryKey}Score`]: newSavedScore
-    };
-
-    // Check Badge Qualification rules (Score thresholds >= 85%)
-    let newlyUnlockedBadge: Badge | null = null;
-    if (score >= 85) {
-      const targetBadgeId = `${categoryKey.substring(0, 4)}_badge`; // matching e.g. chem_badge, hema_badge
-      const targetBadgeDef = INITIAL_BADGES.find(b => b.id === targetBadgeId || b.id.includes(categoryKey.substring(0, 3)));
-      
-      if (targetBadgeDef && !progress.unlockedBadges.includes(targetBadgeDef.id)) {
-        modifiedProgress.unlockedBadges = [...progress.unlockedBadges, targetBadgeDef.id];
-        newlyUnlockedBadge = targetBadgeDef;
+      // Badge qualification: score threshold >= 85%
+      const badgeId = CATEGORY_BADGE[categoryKey];
+      if (score >= 85 && badgeId && !p.unlockedBadges.includes(badgeId)) {
+        updated.unlockedBadges = [...p.unlockedBadges, badgeId];
       }
-    }
 
-    setProgress(modifiedProgress);
-    localStorage.setItem("labmaster_progress_v2", JSON.stringify(modifiedProgress));
-
-    // Claim exercise basic XP rewards
-    handleIncrementXp(amount);
-
-    if (newlyUnlockedBadge) {
-      setNewBadgeModal(newlyUnlockedBadge);
-    }
+      return applyXp(updated, amount);
+    });
   };
 
   const forceRefillGoals = () => {
-    if (!progress) return;
-    const refilledGoals: DailyGoal[] = [
-      { id: "goal_quiz", title: "Verify a clinical lab specimen case", target: 1, current: 0, rewardXp: 50, completed: false, icon: "🔬" },
-      { id: "goal_chat", title: "Discuss 2 diagnostic concepts with AI Prof", target: 2, current: 0, rewardXp: 40, completed: false, icon: "💬" },
-      { id: "goal_perfect", title: "Achieve 90%+ in any clinical simulation", target: 1, current: 0, rewardXp: 60, completed: false, icon: "🏆" }
-    ];
-    syncProgress({
-      ...progress,
-      dailyGoals: refilledGoals
-    });
+    updateProgress(p => ({ ...p, dailyGoals: freshDailyGoals() }));
     alert("Daily Calibration Protocols have been manually recalculated & refreshed!");
   };
 
+  if (!authReady) {
+    return (
+      <div className="min-h-screen bg-slate-950 flex items-center justify-center font-mono">
+        <Loader2 className="w-8 h-8 text-teal-400 animate-spin" />
+      </div>
+    );
+  }
+
   if (!currentUser) {
-    return <LoginPage onLoginSuccess={handleLoginSuccess} />;
+    return <LoginPage />;
+  }
+
+  if (loadError) {
+    return (
+      <div className="min-h-screen bg-slate-950 flex items-center justify-center font-mono p-4">
+        <div className="max-w-md text-center space-y-3">
+          <p className="text-sm text-rose-300">Could not load your lab data: {loadError}</p>
+          <button onClick={() => window.location.reload()} className="text-xs text-teal-400 hover:underline cursor-pointer">
+            Retry
+          </button>
+        </div>
+      </div>
+    );
   }
 
   if (!progress) {
@@ -553,9 +653,10 @@ export default function App() {
                   {/* Left Column: RAG Study Library */}
                   <div className="lg:col-span-4 space-y-6 lg:sticky lg:top-24">
                     <RAGStudyLibrary 
+                      userId={userId!}
                       studyMaterials={studyMaterials}
                       onAddMaterial={(mat) => setStudyMaterials(prev => [mat, ...prev])}
-                      onRemoveMaterial={(id) => setStudyMaterials(prev => prev.filter(m => m.id !== id))}
+                      onRemoveMaterial={handleRemoveMaterial}
                     />
                   </div>
 

@@ -1,5 +1,7 @@
 import express from "express";
+import type { Request, Response, NextFunction } from "express";
 import { GoogleGenAI, Type } from "@google/genai";
+import { createClient, type SupabaseClient, type User } from "@supabase/supabase-js";
 import dotenv from "dotenv";
 import { PDFParse } from "pdf-parse";
 // @ts-ignore
@@ -8,11 +10,136 @@ import mammoth from "mammoth";
 dotenv.config();
 
 const app = express();
-// Raise the body limit: /api/parse-file and /api/chat receive base64-encoded
-// files and images. Express's default json limit is 100kb, which would reject
-// almost any real upload. NOTE: Vercel's platform still caps request bodies at
-// ~4.5MB regardless of this setting (see README "Known limitations").
-app.use(express.json({ limit: "25mb" }));
+// Request bodies are small JSON now: files go straight from the browser to
+// Supabase Storage, and the API only receives storage paths and material ids.
+app.use(express.json({ limit: "1mb" }));
+
+// Same public URL + publishable key the browser uses. The server never holds a
+// service-role key: every query runs as the signed-in user, so row-level
+// security applies to the API exactly as it does to the browser.
+const SUPABASE_URL = process.env.VITE_SUPABASE_URL;
+const SUPABASE_KEY = process.env.VITE_SUPABASE_PUBLISHABLE_KEY;
+const STUDY_BUCKET = "study-materials";
+
+// Per-user AI call quotas (rolling windows), overridable via environment variables.
+const AI_HOURLY_LIMIT = Number(process.env.AI_HOURLY_LIMIT) || 40;
+const AI_DAILY_LIMIT = Number(process.env.AI_DAILY_LIMIT) || 150;
+
+// RAG budget: how much uploaded text is sent to the model per request. Keeping this
+// bounded keeps latency well inside the 60s function limit and caps token spend.
+const RAG_CHAR_BUDGET = 40000;
+const RAG_CHUNK_SIZE = 1500;
+const MAX_CONTEXT_IMAGES = 3;
+// Only the most recent turns are sent to the model; full history stays in the database.
+const MAX_HISTORY_MESSAGES = 20;
+
+type AuthedRequest = Request & { user?: User; supabase?: SupabaseClient };
+
+// Verifies the Supabase access token and attaches a user-scoped client to the request.
+async function requireUser(req: AuthedRequest, res: Response, next: NextFunction) {
+  if (!SUPABASE_URL || !SUPABASE_KEY) {
+    return res.status(500).json({ error: "Server is missing Supabase configuration." });
+  }
+  const token = req.headers.authorization?.replace(/^Bearer\s+/i, "");
+  if (!token) {
+    return res.status(401).json({ error: "Please sign in." });
+  }
+  const supabase = createClient(SUPABASE_URL, SUPABASE_KEY, {
+    global: { headers: { Authorization: `Bearer ${token}` } },
+    auth: { persistSession: false, autoRefreshToken: false },
+  });
+  const { data, error } = await supabase.auth.getUser(token);
+  if (error || !data.user) {
+    return res.status(401).json({ error: "Your session has expired. Please sign in again." });
+  }
+  req.user = data.user;
+  req.supabase = supabase;
+  next();
+}
+
+// Records one AI call against the user's quota; responds 429 when exhausted.
+function aiQuota(kind: string) {
+  return async (req: AuthedRequest, res: Response, next: NextFunction) => {
+    const { data, error } = await req.supabase!.rpc("consume_ai_quota", {
+      p_kind: kind,
+      p_hourly_limit: AI_HOURLY_LIMIT,
+      p_daily_limit: AI_DAILY_LIMIT,
+    });
+    if (error) {
+      console.error("Quota check failed:", error.message);
+      return res.status(500).json({ error: "Could not verify usage quota." });
+    }
+    if (!data?.allowed) {
+      return res.status(429).json({
+        error: `You've reached the AI usage limit (${AI_HOURLY_LIMIT}/hour, ${AI_DAILY_LIMIT}/day). Please take a short break and try again later.`,
+      });
+    }
+    next();
+  };
+}
+
+interface LoadedMaterials {
+  textDocs: { fileName: string; fileType: string; content: string }[];
+  images: { fileName: string; mimeType: string; data: string }[];
+}
+
+// Loads the user's study materials by id (RLS guarantees they're the user's own).
+async function loadMaterials(supabase: SupabaseClient, materialIds: unknown): Promise<LoadedMaterials> {
+  const result: LoadedMaterials = { textDocs: [], images: [] };
+  if (!Array.isArray(materialIds) || materialIds.length === 0) return result;
+  const ids = materialIds.filter((id): id is string => typeof id === "string").slice(0, 50);
+
+  const { data, error } = await supabase
+    .from("study_materials")
+    .select("file_name, file_type, storage_path, content")
+    .in("id", ids)
+    .order("created_at", { ascending: false });
+  if (error) throw new Error(`Could not load study materials: ${error.message}`);
+
+  for (const row of data || []) {
+    if (row.file_type !== "image") {
+      if (row.content) result.textDocs.push({ fileName: row.file_name, fileType: row.file_type, content: row.content });
+    } else if (result.images.length < MAX_CONTEXT_IMAGES) {
+      const { data: blob, error: dlError } = await supabase.storage.from(STUDY_BUCKET).download(row.storage_path);
+      if (dlError || !blob) continue;
+      result.images.push({
+        fileName: row.file_name,
+        mimeType: blob.type || "image/jpeg",
+        data: Buffer.from(await blob.arrayBuffer()).toString("base64"),
+      });
+    }
+  }
+  return result;
+}
+
+// Lightweight retrieval: split documents into chunks, score each by how many query
+// terms it contains, and keep the best chunks until the character budget is spent.
+// With no query, takes each document's opening chunks evenly.
+function selectRagContext(docs: LoadedMaterials["textDocs"], query: string, budget = RAG_CHAR_BUDGET): string {
+  if (docs.length === 0) return "";
+  const terms = Array.from(new Set(query.toLowerCase().match(/[a-z0-9+-]{4,}/g) || []));
+  const chunks: { fileName: string; index: number; text: string; score: number }[] = [];
+  for (const doc of docs) {
+    for (let i = 0, n = 0; i < doc.content.length; i += RAG_CHUNK_SIZE, n++) {
+      const text = doc.content.substring(i, i + RAG_CHUNK_SIZE);
+      const lower = text.toLowerCase();
+      const score = terms.reduce((acc, t) => acc + (lower.includes(t) ? 1 : 0), 0);
+      chunks.push({ fileName: doc.fileName, index: n, text, score });
+    }
+  }
+  // Rank by relevance, then prefer earlier parts of documents (spread evenly across files).
+  chunks.sort((a, b) => b.score - a.score || a.index - b.index);
+  const picked: typeof chunks = [];
+  let used = 0;
+  for (const c of chunks) {
+    if (used + c.text.length > budget) continue;
+    picked.push(c);
+    used += c.text.length;
+  }
+  // Restore reading order within each file so excerpts stay coherent.
+  picked.sort((a, b) => a.fileName.localeCompare(b.fileName) || a.index - b.index);
+  return picked.map(c => `[Source: ${c.fileName} — excerpt ${c.index + 1}]\n${c.text}`).join("\n\n");
+}
 
 // Lazy initialize Gemini AI client
 let aiInstance: GoogleGenAI | null = null;
@@ -43,15 +170,27 @@ app.get("/api/status", (req, res) => {
   });
 });
 
-// Parse Study Material endpoint for RAG
-app.post("/api/parse-file", async (req, res) => {
+// Ingest a study file for RAG. The browser has already uploaded the file to
+// Supabase Storage under <userId>/...; here we download it, extract text, and
+// save a study_materials row. This keeps large files out of the request body,
+// which Vercel caps at ~4.5MB.
+app.post("/api/materials", requireUser, async (req: AuthedRequest, res) => {
   try {
-    const { fileName, fileType, base64Data } = req.body;
-    if (!fileName || !fileType || !base64Data) {
-      return res.status(400).json({ error: "Missing fileName, fileType, or base64Data." });
+    const { fileName, fileType, fileSize, storagePath } = req.body;
+    if (!fileName || !fileType || !storagePath) {
+      return res.status(400).json({ error: "Missing fileName, fileType, or storagePath." });
+    }
+    if (typeof storagePath !== "string" || !storagePath.startsWith(`${req.user!.id}/`)) {
+      return res.status(403).json({ error: "Invalid storage path." });
     }
 
-    const fileBuffer = Buffer.from(base64Data, "base64");
+    const supabase = req.supabase!;
+    const { data: blob, error: dlError } = await supabase.storage.from(STUDY_BUCKET).download(storagePath);
+    if (dlError || !blob) {
+      return res.status(404).json({ error: "Uploaded file not found in storage." });
+    }
+    const fileBuffer = Buffer.from(await blob.arrayBuffer());
+
     let extractedText = "";
     let wordCount = 0;
     let pageCount = 1;
@@ -90,15 +229,16 @@ app.post("/api/parse-file", async (req, res) => {
       wordCount = extractedText.trim().split(/\s+/).filter(Boolean).length;
       pageCount = Math.max(1, Math.ceil(wordCount / 350));
     } else {
-      extractedText = `[IMAGE REFERENCE: ${fileName}]`;
+      // Images keep no text; the original bytes are read from Storage when chatting.
+      extractedText = "";
       wordCount = 0;
       pageCount = 1;
     }
 
-    const originalLength = extractedText.length;
-    const isTruncated = originalLength > 150000;
-    if (isTruncated) {
-      extractedText = extractedText.substring(0, 150000) + "\n\n[Content truncated due to size limits]";
+    // Retrieval picks relevant excerpts per request, so we can afford to keep more text.
+    const MAX_STORED_CHARS = 1_000_000;
+    if (extractedText.length > MAX_STORED_CHARS) {
+      extractedText = extractedText.substring(0, MAX_STORED_CHARS) + "\n\n[Content truncated due to size limits]";
     }
 
     let summary = "";
@@ -106,20 +246,29 @@ app.post("/api/parse-file", async (req, res) => {
       const snippets = extractedText.substring(0, 200).replace(/\s+/g, " ").trim();
       summary = snippets ? snippets + "..." : "Empty reference file.";
     } else {
-      summary = `Multimodal visual study reference (${fileType.toUpperCase()})`;
+      summary = `Multimodal visual study reference (${String(fileType).toUpperCase()})`;
     }
 
-    res.json({
-      success: true,
-      extractedText,
-      wordCount,
-      pageCount,
-      summary,
-      isTruncated
-    });
+    const { data: row, error: insertError } = await supabase
+      .from("study_materials")
+      .insert({
+        user_id: req.user!.id,
+        file_name: fileName,
+        file_type: fileType,
+        file_size: Number(fileSize) || fileBuffer.length,
+        storage_path: storagePath,
+        content: fileType === "image" ? null : extractedText,
+        summary,
+        pages: pageCount,
+        words: wordCount,
+      })
+      .select("id, file_name, file_type, file_size, storage_path, summary, pages, words, created_at")
+      .single();
+    if (insertError) throw new Error(insertError.message);
 
+    res.json({ material: row });
   } catch (err: any) {
-    console.error("Error in parse-file:", err);
+    console.error("Error in /api/materials:", err);
     res.status(500).json({ error: err.message });
   }
 });
@@ -383,12 +532,21 @@ const PRESET_CASES: Record<string, any[]> = {
 };
 
 // 1. CHAT ENDPOINT
-app.post("/api/chat", async (req, res) => {
+// Streams the professor's reply as plain text chunks so the student sees output
+// immediately and long answers never hit the function timeout waiting on one response.
+app.post("/api/chat", requireUser, aiQuota("chat"), async (req: AuthedRequest, res) => {
   try {
-    const { messages, studyMaterials } = req.body;
-    if (!messages || !Array.isArray(messages)) {
+    const { materialIds } = req.body;
+    if (!req.body.messages || !Array.isArray(req.body.messages) || req.body.messages.length === 0) {
       return res.status(400).json({ error: "Messages array is required." });
     }
+    const messages: { role: string; content: string }[] = req.body.messages
+      .slice(-MAX_HISTORY_MESSAGES)
+      .map((m: any) => ({ role: m.role === "assistant" ? "assistant" : "user", content: String(m.content ?? "") }));
+    // Gemini expects the conversation to open with a user turn; trimming history can break that.
+    while (messages.length > 1 && messages[0].role === "assistant") messages.shift();
+    const lastUserMsgRaw = messages[messages.length - 1]?.content || "";
+    const { textDocs, images } = await loadMaterials(req.supabase!, materialIds);
 
     // Construct standard system prompt
     const systemPrompt = `You are dynamic, patient, and highly knowledgeable Professor of Medical Laboratory Science (MLS). 
@@ -400,28 +558,20 @@ Guidelines:
 4. Keep paragraphs readable. Use markdown formatting. Use bullet points for steps.`;
 
     let finalSystemPrompt = systemPrompt;
-    let activeImagesCount = 0;
+    const activeImagesCount = images.length;
 
-    if (studyMaterials && Array.isArray(studyMaterials) && studyMaterials.length > 0) {
-      const textDocs = studyMaterials.filter((m: any) => m.fileType !== "image");
-      const imageDocs = studyMaterials.filter((m: any) => m.fileType === "image");
-      activeImagesCount = imageDocs.length;
+    const ragContext = selectRagContext(textDocs, lastUserMsgRaw);
+    if (ragContext) {
+      let docContext = "\n\n[=== STUDENT UPLOADED STUDY GUIDES & REFERENCE FILES (RAG) ===]\n";
+      docContext += ragContext;
+      docContext += "\n[=== END OF STUDY RESOURCES ===]\n\n";
+      docContext += "CRITICAL RAG INSTRUCTION FOR PROFESSOR:\n";
+      docContext += "The user has provided the above study document excerpts. Ground your teaching, logic, answers, and interpretations inside this referenced text! Cite source file names in brackets like [Source: fileName] if you reference explicit parameters. Be highly interactive, helping the user understand, parse, and review these guidelines.";
+      finalSystemPrompt += docContext;
+    }
 
-      if (textDocs.length > 0) {
-        let docContext = "\n\n[=== STUDENT UPLOADED STUDY GUIDES & REFERENCE FILES (RAG) ===]\n";
-        textDocs.forEach((doc: any, idx: number) => {
-          docContext += `\nDocument idx: ${idx}\nFile Name: "${doc.fileName}" (${doc.fileType.toUpperCase()})\nText Extract Content:\n"""\n${doc.fullContent}\n"""\n`;
-        });
-        docContext += "\n[=== END OF STUDY RESOURCES ===]\n\n";
-        docContext += "CRITICAL RAG INSTRUCTION FOR PROFESSOR:\n";
-        docContext += "The user has provided the above study documents. Ground your teaching, logic, answers, and interpretations inside this referenced text! Cite source file names in brackets like [Source: fileName] if you reference explicit parameters. Be highly interactive, helping the user understand, parse, and review these guidelines.";
-        
-        finalSystemPrompt += docContext;
-      }
-
-      if (imageDocs.length > 0) {
-        finalSystemPrompt += `\n\n[MULTI-MODAL IMAGE ASSISTANCE] The user has provided microscope or analyzer images. Review and describe whatever structures or patterns are present in these visual inputs to teach the student.`;
-      }
+    if (images.length > 0) {
+      finalSystemPrompt += `\n\n[MULTI-MODAL IMAGE ASSISTANCE] The user has provided microscope or analyzer images. Review and describe whatever structures or patterns are present in these visual inputs to teach the student.`;
     }
 
     try {
@@ -432,29 +582,16 @@ Guidelines:
         const parts: any[] = [{ text: m.content }];
 
         // Attach visual images to the absolute last student message
-        if (role === "user" && idx === messages.length - 1 && studyMaterials && Array.isArray(studyMaterials)) {
-          const imageDocs = studyMaterials.filter((m: any) => m.fileType === "image");
-          imageDocs.forEach((img: any) => {
-            let cleanBase64 = img.fullContent;
-            let mimeType = "image/jpeg";
-            if (img.fullContent.includes(";base64,")) {
-              const splitPayload = img.fullContent.split(";base64,");
-              mimeType = splitPayload[0].replace("data:", "");
-              cleanBase64 = splitPayload[1];
-            }
-            parts.push({
-              inlineData: {
-                mimeType: mimeType,
-                data: cleanBase64
-              }
-            });
+        if (role === "user" && idx === messages.length - 1) {
+          images.forEach(img => {
+            parts.push({ inlineData: { mimeType: img.mimeType, data: img.data } });
           });
         }
 
         return { role, parts };
       });
 
-      const response = await client.models.generateContent({
+      const stream = await client.models.generateContentStream({
         model: "gemini-3.5-flash",
         contents: contents,
         config: {
@@ -463,8 +600,26 @@ Guidelines:
         }
       });
 
-      const text = response.text || "I was unable to formulate a response. Please check your query.";
-      res.json({ content: text });
+      res.setHeader("Content-Type", "text/plain; charset=utf-8");
+      res.setHeader("Cache-Control", "no-cache");
+      res.setHeader("X-Accel-Buffering", "no");
+      let wroteAny = false;
+      try {
+        for await (const chunk of stream) {
+          const text = chunk.text;
+          if (text) {
+            res.write(text);
+            wroteAny = true;
+          }
+        }
+      } catch (streamError: any) {
+        // Headers are already sent, so we can't fall back to a JSON error; tell the reader inline.
+        console.error("Gemini stream interrupted:", streamError.message);
+        res.write("\n\n_[The professor's response was interrupted. Please try again.]_");
+        return res.end();
+      }
+      if (!wroteAny) res.write("I was unable to formulate a response. Please check your query.");
+      res.end();
     } catch (apiError: any) {
       console.warn("Falling back to local simulation because Gemini API or RAG call failed:", apiError.message);
       
@@ -475,20 +630,19 @@ Guidelines:
       let matchedDoc: any = null;
       let matchedExcerpt = "";
 
-      if (studyMaterials && Array.isArray(studyMaterials) && studyMaterials.length > 0) {
-        const textDocs = studyMaterials.filter((m: any) => m.fileType !== "image");
+      if (textDocs.length > 0) {
         for (const doc of textDocs) {
-          if (doc.fullContent) {
+          if (doc.content) {
             // Check for words from query
             const wordsMatch = lastUserMsg.split(/\s+/).filter((w: string) => w.length > 4);
             for (const word of wordsMatch) {
               const cleanWord = word.replace(/[^a-zA-Z]/g, "").toLowerCase();
-              const findIndex = doc.fullContent.toLowerCase().indexOf(cleanWord);
+              const findIndex = doc.content.toLowerCase().indexOf(cleanWord);
               if (findIndex !== -1 && cleanWord.length > 3) {
                 matchedDoc = doc;
                 const start = Math.max(0, findIndex - 120);
-                const end = Math.min(doc.fullContent.length, findIndex + 250);
-                matchedExcerpt = doc.fullContent.substring(start, end).replace(/\s+/g, " ").trim();
+                const end = Math.min(doc.content.length, findIndex + 250);
+                matchedExcerpt = doc.content.substring(start, end).replace(/\s+/g, " ").trim();
                 break;
               }
             }
@@ -546,28 +700,32 @@ Welcome to your Clinical Lab Science workstation! I am ready to guide you or tea
 3. Generate simulation cases dynamically by clicking **Lab Specimen Simulator**!`;
       }
 
-      res.json({ content: responseText, simulation: true });
+      // Same plain-text format as the live stream, delivered in one piece.
+      res.setHeader("Content-Type", "text/plain; charset=utf-8");
+      res.setHeader("X-LabMaster-Simulation", "1");
+      res.end(responseText);
     }
   } catch (err: any) {
-    res.status(500).json({ error: err.message });
+    console.error("Error in /api/chat:", err);
+    if (!res.headersSent) res.status(500).json({ error: err.message });
+    else res.end();
   }
 });
 
 // 2. GENERATE EXERCISE ENDPOINT
-app.post("/api/generate-exercise", async (req, res) => {
+app.post("/api/generate-exercise", requireUser, aiQuota("generate-exercise"), async (req: AuthedRequest, res) => {
   try {
-    const { category, studyMaterials } = req.body; // chemistry, hematology, microbiology, bloodbank, immunology
+    const { category, materialIds } = req.body; // chemistry, hematology, microbiology, bloodbank, immunology
     const validCategories = ["chemistry", "hematology", "microbiology", "bloodbank", "immunology"];
     const activeCategory = validCategories.includes(category) ? category : "chemistry";
 
     let ragPromptModifier = "";
-    if (studyMaterials && Array.isArray(studyMaterials) && studyMaterials.length > 0) {
-      const texts = studyMaterials.filter((m: any) => m.fileType !== "image");
-      if (texts.length > 0) {
-        ragPromptModifier = `\n\nCRITICAL DIRECTIVE: Create this exercise specifically based on the analytical characteristics, concepts, case patterns, or rules found in the uploaded reference manuals below:\n` +
-          texts.map((t: any) => `Source File: "${t.fileName}"\n${t.fullContent.substring(0, 15000)}`).join("\n---\n") +
-          `\n\nAnchor the scenario, the biochemical data, and the multiple choice/short answer questions on the material described. The questions must test if the student understands the guidelines and facts in these specific documents.`;
-      }
+    const { textDocs } = await loadMaterials(req.supabase!, materialIds);
+    const ragContext = selectRagContext(textDocs, activeCategory);
+    if (ragContext) {
+      ragPromptModifier = `\n\nCRITICAL DIRECTIVE: Create this exercise specifically based on the analytical characteristics, concepts, case patterns, or rules found in the uploaded reference manuals below:\n` +
+        ragContext +
+        `\n\nAnchor the scenario, the biochemical data, and the multiple choice/short answer questions on the material described. The questions must test if the student understands the guidelines and facts in these specific documents.`;
     }
 
     try {
@@ -682,7 +840,7 @@ Ensure the laboratory values are physiologically realistic and scientifically ac
 });
 
 // 3. GRADE EXERCISE ENDPOINT
-app.post("/api/grade-exercise", async (req, res) => {
+app.post("/api/grade-exercise", requireUser, aiQuota("grade-exercise"), async (req: AuthedRequest, res) => {
   try {
     const { scenario, questions, rawLabData, studentAnswers } = req.body;
     if (!scenario || !questions || !studentAnswers) {

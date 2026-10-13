@@ -299,8 +299,8 @@ export default function MLSProfessorChat({
           );
         })}
 
-        {/* Streaming / Generation loader */}
-        {isGeneratingMessage && (
+        {/* Generation loader: shown until the first streamed words of the reply arrive */}
+        {isGeneratingMessage && messages[messages.length - 1]?.role !== "assistant" && (
           <div className="flex justify-start animate-pulse">
             <div className="bg-slate-950 border border-slate-800 rounded-2xl p-4 text-sm rounded-tl-none">
               <span className="text-[9px] font-mono text-teal-400 block mb-1.0 font-bold uppercase tracking-wider">

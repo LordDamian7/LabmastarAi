@@ -84,7 +84,7 @@ export interface StudyMaterial {
   fileName: string;
   fileType: "pdf" | "docx" | "txt" | "image" | string;
   fileSize: number;
-  fullContent: string; // Plaintext content for text files, or base64 without headers for images
+  storagePath: string; // Path of the original file in the Supabase "study-materials" bucket
   summary?: string;
   uploadedAt: string;
   pages?: number;
