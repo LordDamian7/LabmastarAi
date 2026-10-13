@@ -127,6 +127,7 @@ Useful scripts:
 | ------------------------------- | ----------- | --------------------------------------------------------------------- |
 | `VITE_SUPABASE_URL`             | Yes         | Supabase project URL. Public; used by the browser and the API.        |
 | `VITE_SUPABASE_PUBLISHABLE_KEY` | Yes         | Supabase publishable key. Public; data is protected by RLS.           |
+|                                 |             | *Alternatively*, the names set by Vercel's Supabase integration (`NEXT_PUBLIC_SUPABASE_URL`, `NEXT_PUBLIC_SUPABASE_ANON_KEY` / `_PUBLISHABLE_KEY`) are picked up automatically. The integration's service-role key is not used. |
 | `GEMINI_API_KEY`                | For live AI | Get one at https://aistudio.google.com/app/apikey. Absent ⇒ simulation mode. |
 | `AI_HOURLY_LIMIT`               | No          | Per-user AI calls per rolling hour (default 40).                      |
 | `AI_DAILY_LIMIT`                | No          | Per-user AI calls per rolling day (default 150).                      |

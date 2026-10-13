@@ -17,8 +17,15 @@ app.use(express.json({ limit: "1mb" }));
 // Same public URL + publishable key the browser uses. The server never holds a
 // service-role key: every query runs as the signed-in user, so row-level
 // security applies to the API exactly as it does to the browser.
-const SUPABASE_URL = process.env.VITE_SUPABASE_URL;
-const SUPABASE_KEY = process.env.VITE_SUPABASE_PUBLISHABLE_KEY;
+// Accepts the manual VITE_* names or those created by the Vercel Supabase integration.
+const SUPABASE_URL =
+  process.env.VITE_SUPABASE_URL || process.env.NEXT_PUBLIC_SUPABASE_URL || process.env.SUPABASE_URL;
+const SUPABASE_KEY =
+  process.env.VITE_SUPABASE_PUBLISHABLE_KEY ||
+  process.env.NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY ||
+  process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY ||
+  process.env.SUPABASE_PUBLISHABLE_KEY ||
+  process.env.SUPABASE_ANON_KEY;
 const STUDY_BUCKET = "study-materials";
 
 // Per-user AI call quotas (rolling windows), overridable via environment variables.
