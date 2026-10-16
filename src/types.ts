@@ -5,35 +5,14 @@ export interface LabResultItem {
   status: "Normal" | "High" | "Low" | "Critical High" | "Critical Low" | string;
 }
 
-export interface Question {
-  id: number;
-  text: string;
-  hint: string;
-  type: "multiple-choice" | "short-answer";
-  options?: string[];
-  correctAnswer: string;
-}
-
-export interface CaseStudy {
-  id: string;
-  title: string;
-  difficulty: "Beginner" | "Intermediate" | "Advanced";
-  scenario: string;
+/** One board-style multiple-choice question in a Lab Simulator exam. */
+export interface ExamQuestion {
+  topic: string;
+  stem: string;
   labData: LabResultItem[];
-  questions: Question[];
-}
-
-export interface QuestionFeedbackResult {
-  id: number;
-  correct: boolean;
-  feedback: string;
-}
-
-export interface GradingResult {
-  score: number;
-  summary: string;
-  questionFeedback: QuestionFeedbackResult[];
-  pearlOfWisdom: string;
+  options: string[];
+  answerIndex: number;
+  explanation: string;
 }
 
 export interface Message {

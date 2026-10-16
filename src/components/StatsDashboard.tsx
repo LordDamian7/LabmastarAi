@@ -8,7 +8,6 @@ import {
   Clock,
   ArrowRight,
   Check,
-  Lock,
   TestTube,
   Droplet,
   Microscope,
@@ -17,6 +16,10 @@ import {
   Gift
 } from "lucide-react";
 import { motion } from "motion/react";
+import BadgeMedal from "./BadgeMedal";
+import { BADGE_MIN_QUESTIONS } from "./QuizExercise";
+
+const BADGE_SCORE = 85;
 
 interface StatsDashboardProps {
   progress: UserProgress;
@@ -34,14 +37,6 @@ const DISCIPLINES = [
   { id: "bloodbank", name: "Blood Bank", key: "bloodbankScore", bar: "bg-low", icon: Syringe, blurb: "ABO typing, antibody ID and crossmatching" },
   { id: "immunology", name: "Immunology", key: "immunologyScore", bar: "bg-violet", icon: Dna, blurb: "ANA patterns, titers and ELISA" }
 ] as const;
-
-const BADGE_ICONS: Record<string, typeof TestTube> = {
-  chem_badge: TestTube,
-  hem_badge: Droplet,
-  micro_badge: Microscope,
-  bb_badge: Syringe,
-  imm_badge: Dna
-};
 
 const rankTitle = (level: number) =>
   level >= 7 ? "Chief Resident" : level >= 5 ? "Senior Scientist" : level >= 3 ? "Lab Resident" : "Trainee Tech";
@@ -68,7 +63,7 @@ export default function StatsDashboard({ progress, userName, onClaimGoal, allBad
   const xpToNext = progress.xpNeededForNextLevel - progress.xp;
   const xpPct = (progress.xp / progress.xpNeededForNextLevel) * 100;
 
-  // Recommend the weakest discipline as today's case.
+  // Recommend the weakest discipline as today's exam.
   const scored = DISCIPLINES.map(d => ({ ...d, score: (progress[d.key] as number) || 0 }));
   const focus = [...scored].sort((a, b) => a.score - b.score)[0];
 
@@ -85,7 +80,7 @@ export default function StatsDashboard({ progress, userName, onClaimGoal, allBad
             {greeting()}, {firstName}
           </h1>
           <p className="text-[15px] text-ink-2 mt-1">
-            You're {xpToNext} XP away from Level {progress.level + 1}. One case should do it.
+            You're {xpToNext} XP away from Level {progress.level + 1}. One practice exam should do it.
           </p>
         </div>
         <div className="inline-flex items-center gap-2 self-start sm:self-auto rounded-full border border-xp/35 bg-xp/12 px-3.5 py-2">
@@ -96,7 +91,7 @@ export default function StatsDashboard({ progress, userName, onClaimGoal, allBad
         </div>
       </div>
 
-      {/* Today's case */}
+      {/* Today's exam */}
       <section className="relative overflow-hidden rounded-2xl border border-accent/35 bg-surface p-6 sm:p-7">
         <div className="pointer-events-none absolute inset-0 bg-gradient-to-r from-accent/15 via-transparent to-transparent" />
         <div className="relative flex flex-col md:flex-row md:items-center gap-6">
@@ -108,16 +103,16 @@ export default function StatsDashboard({ progress, userName, onClaimGoal, allBad
               Sharpen your {focus.name} skills — your lowest score at {focus.score}%
             </h2>
             <p className="text-[15px] text-ink-2 leading-relaxed max-w-2xl">
-              A fresh patient case covering {focus.blurb}. Read the lab report, answer three questions, and get graded feedback.
+              A board-style practice exam covering {focus.blurb}. Instant feedback on every question and a full score report at the end.
             </p>
             <div className="flex flex-wrap gap-x-5 gap-y-2 text-sm font-medium text-ink-3">
-              <span className="inline-flex items-center gap-1.5"><Clock className="w-4 h-4" /> ~6 min</span>
-              <span className="inline-flex items-center gap-1.5"><Target className="w-4 h-4" /> 3 questions</span>
-              <span className="inline-flex items-center gap-1.5"><Zap className="w-4 h-4" /> up to +100 XP</span>
+              <span className="inline-flex items-center gap-1.5"><Clock className="w-4 h-4" /> ~45 min</span>
+              <span className="inline-flex items-center gap-1.5"><Target className="w-4 h-4" /> 50 questions</span>
+              <span className="inline-flex items-center gap-1.5"><Zap className="w-4 h-4" /> up to +175 XP</span>
             </div>
           </div>
           <button onClick={() => onStartCase(focus.id)} className="btn-primary self-start md:self-center px-6 py-3.5 text-[15px]">
-            Start case <ArrowRight className="w-[18px] h-[18px]" />
+            Start exam <ArrowRight className="w-[18px] h-[18px]" />
           </button>
         </div>
       </section>
@@ -139,11 +134,11 @@ export default function StatsDashboard({ progress, userName, onClaimGoal, allBad
         <div className="card p-5 sm:p-6 space-y-3.5">
           <div className="flex items-center gap-2.5">
             <span className="h-9 w-9 rounded-xl bg-violet/14 flex items-center justify-center"><Target className="w-[18px] h-[18px] text-violet" /></span>
-            <span className="text-sm font-semibold text-ink-2">Cases solved</span>
+            <span className="text-sm font-semibold text-ink-2">Exams completed</span>
           </div>
           <p className="text-3xl font-extrabold tracking-tight">{progress.completedExercisesCount}</p>
           <p className="text-sm text-ink-3">
-            {progress.completedExercisesCount === 0 ? "Solve your first case to start your record." : "Every case adds XP and sharpens your scores."}
+            {progress.completedExercisesCount === 0 ? "Finish your first exam to start your record." : "Every exam adds XP and sharpens your scores."}
           </p>
         </div>
 
@@ -215,24 +210,48 @@ export default function StatsDashboard({ progress, userName, onClaimGoal, allBad
       </div>
 
       {/* Badges */}
-      <section className="card p-5 sm:p-6 space-y-4">
-        <h3 className="text-lg font-bold">Badges</h3>
+      <section className="card p-5 sm:p-6 space-y-5">
+        <div className="flex flex-wrap items-end justify-between gap-2">
+          <div>
+            <h3 className="text-lg font-bold">Discipline medals</h3>
+            <p className="text-sm text-ink-3 mt-0.5">Score {BADGE_SCORE}%+ on a {BADGE_MIN_QUESTIONS}+ question exam to earn each medal.</p>
+          </div>
+          <span className="text-sm font-semibold text-xp">{progress.unlockedBadges.length} / {allBadges.length} earned</span>
+        </div>
         <ul className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-3">
           {allBadges.map(badge => {
             const earned = progress.unlockedBadges.includes(badge.id);
-            const Icon = BADGE_ICONS[badge.id] || Trophy;
+            const discipline = DISCIPLINES.find(d => d.id === badge.category);
+            const best = discipline ? (progress[discipline.key] as number) || 0 : 0;
             return (
-              <li key={badge.id} className={`rounded-xl border p-4 space-y-3 ${earned ? "border-xp/40 bg-xp/8" : "border-line bg-surface-2"}`} title={badge.description}>
-                <div className="flex items-start justify-between">
-                  <span className={`h-10 w-10 rounded-xl flex items-center justify-center ${earned ? "bg-xp/20 text-xp" : "bg-surface text-ink-3"}`}>
-                    <Icon className="w-5 h-5" />
-                  </span>
-                  {!earned && <Lock className="w-4 h-4 text-ink-3" />}
-                </div>
-                <div>
-                  <p className={`text-sm font-bold ${earned ? "text-ink" : "text-ink-2"}`}>{badge.name}</p>
-                  <p className="text-xs text-ink-3 mt-1 leading-snug">{earned ? "Earned" : badge.requirement}</p>
-                </div>
+              <li key={badge.id}>
+                <button
+                  onClick={() => !earned && onStartCase(badge.category)}
+                  disabled={earned}
+                  title={earned ? badge.description : `${badge.requirement} — start an exam`}
+                  className={`group w-full h-full rounded-2xl border p-4 pt-5 flex flex-col items-center text-center gap-3 transition-colors ${
+                    earned ? "border-xp/40 bg-gradient-to-b from-xp/10 to-transparent cursor-default" : "border-line bg-surface-2 hover:border-accent/50"
+                  }`}
+                >
+                  <BadgeMedal category={badge.category} earned={earned} progress={best / BADGE_SCORE} size={84} />
+                  <div className="space-y-1">
+                    <p className={`text-sm font-bold leading-tight ${earned ? "text-ink" : "text-ink-2"}`}>{badge.name}</p>
+                    <p className="text-xs text-ink-3">{discipline?.name}</p>
+                  </div>
+                  {earned ? (
+                    <span className="mt-auto inline-flex items-center gap-1 rounded-full bg-xp/15 px-2.5 py-1 text-xs font-bold text-xp">
+                      <Check className="w-3.5 h-3.5" /> Earned
+                    </span>
+                  ) : (
+                    <span className="mt-auto w-full space-y-1.5">
+                      <span className="flex justify-between text-xs font-semibold">
+                        <span className="text-ink-3">Best {best}%</span>
+                        <span className="text-ink-2">{BADGE_SCORE}%</span>
+                      </span>
+                      <ProgressBar pct={(best / BADGE_SCORE) * 100} className="bg-accent" />
+                    </span>
+                  )}
+                </button>
               </li>
             );
           })}

@@ -81,3 +81,31 @@
 .prose-lab li { @apply my-1; }
 .prose-lab code { @apply rounded bg-surface-2 px-1.5 py-0.5 font-mono text-[13px] text-accent; }
 .prose-lab a { @apply text-accent underline; }
+
+/* Badge medals */
+.medal-earned svg {
+  filter: drop-shadow(0 6px 18px color-mix(in srgb, var(--medal-glow) 35%, transparent));
+}
+.medal-shine {
+  animation: medal-shine 3.6s ease-in-out infinite;
+}
+@keyframes medal-shine {
+  0%, 55% { transform: translateX(0) skewX(-18deg); }
+  100% { transform: translateX(190px) skewX(-18deg); }
+}
+.medal-burst {
+  position: absolute;
+  inset: -18%;
+  border-radius: 9999px;
+  background: radial-gradient(circle, color-mix(in srgb, var(--medal-glow) 40%, transparent) 0%, transparent 65%);
+  animation: medal-burst 2.4s ease-out infinite;
+  pointer-events: none;
+  z-index: -1;
+}
+@keyframes medal-burst {
+  0% { transform: scale(0.7); opacity: 0.9; }
+  100% { transform: scale(1.25); opacity: 0; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .medal-shine, .medal-burst { animation: none; }
+}

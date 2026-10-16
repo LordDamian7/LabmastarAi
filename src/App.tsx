@@ -4,7 +4,8 @@ import { UserProgress, Badge, DailyGoal, Message, StudyMaterial } from "./types"
 import { supabase, STUDY_BUCKET } from "./lib/supabase";
 import { apiFetch, apiError } from "./lib/api";
 import StatsDashboard from "./components/StatsDashboard";
-import QuizExercise from "./components/QuizExercise";
+import QuizExercise, { BADGE_MIN_QUESTIONS } from "./components/QuizExercise";
+import BadgeMedal from "./components/BadgeMedal";
 import MLSProfessorChat from "./components/MLSProfessorChat";
 import RAGStudyLibrary from "./components/RAGStudyLibrary";
 import LoginPage from "./components/LoginPage";
@@ -15,7 +16,6 @@ import {
   BookOpen,
   LogOut,
   Loader2,
-  Trophy,
   GraduationCap,
   Sparkles
 } from "lucide-react";
@@ -25,46 +25,46 @@ const INITIAL_BADGES: Badge[] = [
   {
     id: "chem_badge",
     name: "Enzyme Detective",
-    description: "Successfully diagnosed pre-analytical hemolysis delta-checks and severe isolated potassium discrepancies.",
+    description: "Mastered clinical chemistry: enzymes, electrolytes, acid–base and endocrine interpretation.",
     unlockedAt: null,
     iconName: "test-tube",
-    requirement: "Score 85% or higher on Clinical Chemistry",
+    requirement: "Score 85%+ on a 25+ question Clinical Chemistry exam",
     category: "chemistry"
   },
   {
     id: "hem_badge",
     name: "WBC Smear Specialist",
-    description: "Identified neutrophilic left shift Döhle bodies and rough endoplasmic reticulum sheets under slide magnification.",
+    description: "Mastered hematology: cell morphology, anemias, leukemias and hemostasis.",
     unlockedAt: null,
     iconName: "droplet",
-    requirement: "Score 85% or higher on Hematology",
+    requirement: "Score 85%+ on a 25+ question Hematology exam",
     category: "hematology"
   },
   {
     id: "micro_badge",
     name: "Microbial Profiler",
-    description: "Successfully differentiated enterogenous Gram-negative rods on MacConkey agar cultures using indole profiling.",
+    description: "Mastered microbiology: organism identification, media, biochemicals and susceptibility.",
     unlockedAt: null,
     iconName: "virus",
-    requirement: "Score 85% or higher on Medical Microbiology",
+    requirement: "Score 85%+ on a 25+ question Microbiology exam",
     category: "microbiology"
   },
   {
     id: "bb_badge",
     name: "Immunohematology Officer",
-    description: "Sorted ABO typing discrepancies and resolved cold autoantibodies using the prewarm procedure.",
+    description: "Mastered blood bank: ABO/Rh discrepancies, antibody ID, crossmatch and transfusion reactions.",
     unlockedAt: null,
     iconName: "shield",
-    requirement: "Score 85% or higher on Blood Bank",
+    requirement: "Score 85%+ on a 25+ question Blood Bank exam",
     category: "bloodbank"
   },
   {
     id: "imm_badge",
     name: "Autoantibody Diagnostician",
-    description: "Classified indirect IFA antinuclear homogeneous patterns and double-stranded DNA lupus parameters.",
+    description: "Mastered immunology: autoantibodies, serology, complement and immunodeficiency.",
     unlockedAt: null,
     iconName: "dna",
-    requirement: "Score 85% or higher on Immunology",
+    requirement: "Score 85%+ on a 25+ question Immunology exam",
     category: "immunology"
   }
 ];
@@ -88,9 +88,9 @@ const CATEGORY_BADGE: Record<string, string> = {
 };
 
 const freshDailyGoals = (): DailyGoal[] => [
-  { id: "goal_quiz", title: "Solve a clinical lab specimen case", target: 1, current: 0, rewardXp: 50, completed: false, icon: "🔬" },
+  { id: "goal_quiz", title: "Complete a board-style practice exam", target: 1, current: 0, rewardXp: 50, completed: false, icon: "🔬" },
   { id: "goal_chat", title: "Discuss 2 diagnostic concepts with Professor", target: 2, current: 0, rewardXp: 40, completed: false, icon: "💬" },
-  { id: "goal_perfect", title: "Achieve 90%+ in any clinical simulation", target: 1, current: 0, rewardXp: 60, completed: false, icon: "🏆" }
+  { id: "goal_perfect", title: "Score 90%+ on any practice exam", target: 1, current: 0, rewardXp: 60, completed: false, icon: "🏆" }
 ];
 
 const freshProgress = (): UserProgress => ({
@@ -116,7 +116,11 @@ const dayKey = (d: Date) => `${d.getFullYear()}-${d.getMonth() + 1}-${d.getDate(
 const rollDailyState = (p: UserProgress): UserProgress => {
   const now = new Date();
   const last = new Date(p.lastDailyReset);
-  if (dayKey(last) === dayKey(now)) return p;
+  if (dayKey(last) === dayKey(now)) {
+    // Keep today's counts but pick up any renamed goal titles.
+    const fresh = freshDailyGoals();
+    return { ...p, dailyGoals: p.dailyGoals.map(g => ({ ...g, title: fresh.find(f => f.id === g.id)?.title ?? g.title })) };
+  }
   const yesterday = new Date(now);
   yesterday.setDate(now.getDate() - 1);
   const streakCount = dayKey(last) === dayKey(yesterday) ? p.streakCount + 1 : 1;
@@ -414,7 +418,7 @@ export default function App() {
     }));
   };
 
-  const handleAwardXpOnExerciseScore = (amount: number, categoryKey: string = "chemistry", score: number = 0) => {
+  const handleAwardXpOnExerciseScore = (amount: number, categoryKey: string = "chemistry", score: number = 0, questionCount: number = 0) => {
     updateProgress(p => {
       const scoreKey = `${categoryKey}Score` as keyof UserProgress;
       const originalScore = (p[scoreKey] as number | undefined) || 0;
@@ -424,9 +428,9 @@ export default function App() {
         [scoreKey]: Math.max(originalScore, score)
       };
 
-      // Badge qualification: score threshold >= 85%
+      // Badge qualification: 85%+ on an exam of at least BADGE_MIN_QUESTIONS questions
       const badgeId = CATEGORY_BADGE[categoryKey];
-      if (score >= 85 && badgeId && !p.unlockedBadges.includes(badgeId)) {
+      if (score >= 85 && questionCount >= BADGE_MIN_QUESTIONS && badgeId && !p.unlockedBadges.includes(badgeId)) {
         updated.unlockedBadges = [...p.unlockedBadges, badgeId];
       }
 
@@ -644,8 +648,8 @@ export default function App() {
             role="dialog" aria-modal="true" aria-labelledby="badge-title"
           >
             <motion.div initial={{ scale: 0.92, y: 12 }} animate={{ scale: 1, y: 0 }} className="card max-w-sm w-full p-8 text-center space-y-5 border-xp/40">
-              <div className="mx-auto h-16 w-16 rounded-2xl bg-xp/15 flex items-center justify-center">
-                <Trophy className="w-8 h-8 text-xp" />
+              <div className="mx-auto w-fit">
+                <BadgeMedal category={newBadgeModal.category} earned size={128} celebrate />
               </div>
               <div className="space-y-1">
                 <p className="eyebrow text-xp flex items-center justify-center gap-1.5"><Sparkles className="w-3.5 h-3.5" /> Badge earned</p>
