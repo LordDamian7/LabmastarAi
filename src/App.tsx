@@ -8,23 +8,16 @@ import QuizExercise from "./components/QuizExercise";
 import MLSProfessorChat from "./components/MLSProfessorChat";
 import RAGStudyLibrary from "./components/RAGStudyLibrary";
 import LoginPage from "./components/LoginPage";
-import { 
-  Award, 
-  BookOpen, 
-  MessageSquare, 
-  TrendingUp, 
-  Zap, 
-  Flame, 
-  Layers, 
-  Compass, 
-  Sparkles,
-  Volume2,
-  Lock,
-  Moon,
-  VolumeX,
-  Database,
+import {
+  LayoutDashboard,
+  FlaskConical,
+  MessageSquare,
+  BookOpen,
+  LogOut,
   Loader2,
-  LogOut
+  Trophy,
+  GraduationCap,
+  Sparkles
 } from "lucide-react";
 import { motion, AnimatePresence } from "motion/react";
 
@@ -76,6 +69,15 @@ const INITIAL_BADGES: Badge[] = [
   }
 ];
 
+type Tab = "dashboard" | "simulator" | "professor" | "library";
+
+const NAV: { id: Tab; label: string; short: string; icon: typeof LayoutDashboard }[] = [
+  { id: "dashboard", label: "Dashboard", short: "Home", icon: LayoutDashboard },
+  { id: "simulator", label: "Lab Simulator", short: "Lab", icon: FlaskConical },
+  { id: "professor", label: "AI Professor", short: "Professor", icon: MessageSquare },
+  { id: "library", label: "Study Library", short: "Library", icon: BookOpen }
+];
+
 // Which badge each exercise category unlocks.
 const CATEGORY_BADGE: Record<string, string> = {
   chemistry: "chem_badge",
@@ -95,7 +97,7 @@ const freshProgress = (): UserProgress => ({
   level: 1,
   xp: 0,
   xpNeededForNextLevel: 100,
-  streakCount: 4, // Nice pre-calibrated default values
+  streakCount: 1,
   lastDailyReset: new Date().toISOString(),
   chemistryScore: 35,
   hematologyScore: 25,
@@ -106,6 +108,20 @@ const freshProgress = (): UserProgress => ({
   completedExercisesCount: 0,
   dailyGoals: freshDailyGoals()
 });
+
+const dayKey = (d: Date) => `${d.getFullYear()}-${d.getMonth() + 1}-${d.getDate()}`;
+
+// New calendar day since the last visit: refresh daily goals and update the streak
+// (consecutive day keeps it going, a missed day restarts it at 1).
+const rollDailyState = (p: UserProgress): UserProgress => {
+  const now = new Date();
+  const last = new Date(p.lastDailyReset);
+  if (dayKey(last) === dayKey(now)) return p;
+  const yesterday = new Date(now);
+  yesterday.setDate(now.getDate() - 1);
+  const streakCount = dayKey(last) === dayKey(yesterday) ? p.streakCount + 1 : 1;
+  return { ...p, streakCount, lastDailyReset: now.toISOString(), dailyGoals: freshDailyGoals() };
+};
 
 // Adds XP, rolling over as many levels as the amount covers.
 const applyXp = (p: UserProgress, amount: number): UserProgress => {
@@ -121,7 +137,9 @@ const applyXp = (p: UserProgress, amount: number): UserProgress => {
 };
 
 export default function App() {
-  const [activeTab, setActiveTab] = useState<"dashboard" | "exercises" | "chat">("dashboard");
+  const [activeTab, setActiveTab] = useState<Tab>("dashboard");
+  // Category the dashboard asked the simulator to open straight away.
+  const [pendingCategory, setPendingCategory] = useState<string | null>(null);
   const [session, setSession] = useState<Session | null>(null);
   const [authReady, setAuthReady] = useState(false);
   const [progress, setProgress] = useState<UserProgress | null>(null);
@@ -154,17 +172,17 @@ export default function App() {
     });
     const { data: listener } = supabase.auth.onAuthStateChange((event, nextSession) => {
       setSession(nextSession);
-      // Arrived from a "forgot passcode" email link: let the user choose a new one.
+      // Arrived from a "forgot password" email link: let the user choose a new one.
       if (event === "PASSWORD_RECOVERY") {
         setTimeout(async () => {
-          const newPassword = window.prompt("Choose a new passcode (at least 8 characters):");
+          const newPassword = window.prompt("Choose a new password (at least 8 characters):");
           if (!newPassword) return;
           if (newPassword.length < 8) {
-            alert("Passcode must be at least 8 characters. Request another reset link to try again.");
+            alert("Password must be at least 8 characters. Request another reset link to try again.");
             return;
           }
           const { error } = await supabase.auth.updateUser({ password: newPassword });
-          alert(error ? `Could not update passcode: ${error.message}` : "Passcode updated.");
+          alert(error ? `Could not update password: ${error.message}` : "Password updated.");
         }, 0);
       }
     });
@@ -224,7 +242,8 @@ export default function App() {
       }
       if (cancelled) return;
       lastProgressRef.current = loaded;
-      setProgress(loaded);
+      // Applied as a normal update so the daily rollover gets saved.
+      setProgress(rollDailyState(loaded));
 
       setMessages((chatRes.data || []).map(row => ({
         id: row.id,
@@ -415,15 +434,15 @@ export default function App() {
     });
   };
 
-  const forceRefillGoals = () => {
-    updateProgress(p => ({ ...p, dailyGoals: freshDailyGoals() }));
-    alert("Daily Calibration Protocols have been manually recalculated & refreshed!");
+  const startCase = (category: string) => {
+    setPendingCategory(category);
+    setActiveTab("simulator");
   };
 
   if (!authReady) {
     return (
-      <div className="min-h-screen bg-slate-950 flex items-center justify-center font-mono">
-        <Loader2 className="w-8 h-8 text-teal-400 animate-spin" />
+      <div className="min-h-screen flex items-center justify-center">
+        <Loader2 className="w-8 h-8 text-accent animate-spin" />
       </div>
     );
   }
@@ -434,12 +453,11 @@ export default function App() {
 
   if (loadError) {
     return (
-      <div className="min-h-screen bg-slate-950 flex items-center justify-center font-mono p-4">
-        <div className="max-w-md text-center space-y-3">
-          <p className="text-sm text-rose-300">Could not load your lab data: {loadError}</p>
-          <button onClick={() => window.location.reload()} className="text-xs text-teal-400 hover:underline cursor-pointer">
-            Retry
-          </button>
+      <div className="min-h-screen flex items-center justify-center p-4">
+        <div className="card max-w-md p-6 text-center space-y-4">
+          <p className="text-ink">Couldn't load your lab data.</p>
+          <p className="text-sm text-ink-3">{loadError}</p>
+          <button onClick={() => window.location.reload()} className="btn-primary">Try again</button>
         </div>
       </div>
     );
@@ -447,333 +465,198 @@ export default function App() {
 
   if (!progress) {
     return (
-      <div className="min-h-screen bg-slate-950 flex items-center justify-center font-mono">
-        <div className="flex flex-col items-center gap-2">
-          <Loader2 className="w-8 h-8 text-teal-400 animate-spin" />
-          <span className="text-xs text-slate-400">Loading Hematology Chambers...</span>
-        </div>
+      <div className="min-h-screen flex flex-col items-center justify-center gap-3">
+        <Loader2 className="w-8 h-8 text-accent animate-spin" />
+        <span className="text-sm text-ink-3">Loading your lab…</span>
       </div>
     );
   }
 
+  const initials = currentUser.name.split(/\s+/).map(w => w[0]).join("").slice(0, 2).toUpperCase() || "ST";
+
   return (
-    <div className="min-h-screen bg-slate-950 font-normal select-none text-slate-100 flex flex-col antialiased">
-      
-      {/* Dynamic Upper Top Status Bar */}
-      <div className="bg-slate-950 border-b border-slate-900/80 px-4 py-2.5">
-        <div className="max-w-7xl mx-auto flex justify-between items-center text-xs font-mono">
-          <div className="flex items-center gap-3">
-            <span className="flex items-center gap-1.5 text-slate-400">
-              <Database className="w-3.5 h-3.5" /> Engine:
-              <span className={`px-1.5 py-0.5 rounded font-bold ${isSimulationMode ? "bg-amber-500/10 text-amber-400 border border-amber-500/20" : "bg-emerald-500/10 text-emerald-400 border border-emerald-500/20"}`}>
-                {isSimulationMode ? "SIMULATION MODE" : "GEMINI ENHANCED"}
-              </span>
-            </span>
+    <div className="min-h-screen lg:flex">
+      {/* Desktop sidebar */}
+      <aside className="hidden lg:flex lg:w-64 lg:flex-col lg:fixed lg:inset-y-0 border-r border-line bg-surface px-5 py-7">
+        <div className="flex items-center gap-3 px-1">
+          <div className="h-10 w-10 rounded-xl bg-accent flex items-center justify-center">
+            <FlaskConical className="w-5 h-5 text-accent-ink" />
           </div>
-
-          <div className="flex items-center gap-4">
-            <span className="hidden sm:inline-flex items-center gap-1.5 text-slate-400">
-              <Flame className="w-3.5 h-3.5 text-amber-500 animate-pulse" />
-              Streak Count: <span className="font-bold text-slate-100">{progress.streakCount} days</span>
-            </span>
-            <span className="text-slate-500 font-bold">|</span>
-            <button
-              onClick={forceRefillGoals}
-              className="text-teal-400 hover:text-teal-300 font-bold hover:underline cursor-pointer"
-            >
-              🔄 Recalibrate Daily Goals
-            </button>
+          <div>
+            <p className="text-lg font-extrabold tracking-tight leading-none">LabMaster</p>
+            <p className="text-xs font-medium text-ink-3 mt-1">MLS training lab</p>
           </div>
         </div>
-      </div>
 
-      {/* Primary Header Segment */}
-      <header className="bg-slate-900/60 border-b border-slate-800/80 backdrop-blur-md sticky top-0 z-40">
-        <div className="max-w-7xl mx-auto px-4 md:px-6 py-4 flex flex-col sm:flex-row items-center justify-between gap-4">
-          
-          {/* Brand/Logo Assembly */}
-          <div className="flex items-center gap-3">
-            <div className="h-10 w-10 bg-gradient-to-tr from-teal-500 to-emerald-400 rounded-xl flex items-center justify-center text-xl shadow-lg shadow-teal-500/20 border border-teal-250">
-              🔬
-            </div>
-            <div>
-              <div className="flex items-center gap-1.5">
-                <h1 className="text-lg font-extrabold tracking-tight text-white font-sans leading-none">LabMaster AI</h1>
-                <span className="text-[10px] font-mono text-emerald-400 font-bold border border-emerald-500/20 px-1.5 py-0.5 rounded bg-emerald-500/5 uppercase leading-none">
-                  v3.5
-                </span>
-              </div>
-              <p className="text-xs text-slate-400 font-sans mt-1">Medical Laboratory Science Interactive Sandbox</p>
-            </div>
+        <nav className="mt-8 space-y-1" aria-label="Main">
+          {NAV.map(({ id, label, icon: Icon }) => {
+            const active = activeTab === id;
+            return (
+              <button
+                key={id}
+                onClick={() => setActiveTab(id)}
+                aria-current={active ? "page" : undefined}
+                className={`w-full flex items-center gap-3 rounded-xl px-3.5 py-3 text-[15px] transition-colors cursor-pointer ${
+                  active ? "bg-accent/12 text-accent font-bold" : "text-ink-2 font-medium hover:bg-surface-2 hover:text-ink"
+                }`}
+              >
+                <Icon className="w-5 h-5" />
+                {label}
+              </button>
+            );
+          })}
+        </nav>
+
+        {isSimulationMode && (
+          <div className="mt-6 rounded-xl border border-xp/30 bg-xp/8 p-3.5">
+            <p className="text-xs font-bold text-xp">Demo AI mode</p>
+            <p className="text-xs text-ink-3 mt-1 leading-relaxed">Answers and cases come from a built-in set until a Gemini key is added.</p>
           </div>
+        )}
 
-          <div className="flex flex-wrap items-center gap-4">
-            {/* Miniature telemetry parameters displayed in header */}
-            <div className="flex items-center gap-5 bg-slate-950/80 px-4 py-2 rounded-xl border border-slate-850">
-              <div className="text-left font-mono">
-                <span className="text-[10px] text-slate-400 uppercase tracking-wider block">Student Rank</span>
-                <p className="text-xs font-bold text-slate-200">Level {progress.level}</p>
-              </div>
-              <div className="h-6 w-px bg-slate-850" />
-              
-              <div className="text-left font-mono">
-                <span className="text-[10px] text-slate-400 uppercase tracking-wider block">Aggregate XP</span>
-                <p className="text-xs font-bold text-teal-400">{progress.xp} pts</p>
-              </div>
-
-              <div className="h-6 w-px bg-slate-850" />
-              <div className="text-left font-mono">
-                <span className="text-[10px] text-slate-400 uppercase tracking-wider block">Badges Unlocks</span>
-                <p className="text-xs font-bold text-amber-500">{progress.unlockedBadges.length} / 5</p>
-              </div>
-            </div>
-
-            {/* Active User session details and logout trigger */}
-            {currentUser && (
-              <div className="flex items-center gap-3 bg-slate-900 border border-slate-850 rounded-xl px-3 py-1.5 shadow">
-                <div className="h-7 w-7 rounded-lg bg-teal-500/20 border border-teal-500/30 text-teal-400 flex items-center justify-center font-bold text-[10px]">
-                  {currentUser.name ? currentUser.name.substring(0, 2).toUpperCase() : "CU"}
-                </div>
-                <div className="text-left">
-                  <p className="text-[11px] font-bold text-slate-200 leading-3">{currentUser.name}</p>
-                  <p className="text-[9px] font-mono text-slate-500 leading-3 truncate max-w-[120px]">{currentUser.email}</p>
-                </div>
-                <button
-                  onClick={handleLogout}
-                  title="Log out of clinical session"
-                  className="p-1 text-slate-400 hover:text-rose-400 hover:bg-rose-500/10 rounded-lg cursor-pointer transition-colors ml-1"
-                >
-                  <LogOut className="w-3.5 h-3.5" />
-                </button>
-              </div>
-            )}
+        <div className="mt-auto flex items-center gap-3 rounded-xl bg-surface-2 p-3">
+          <div className="h-9 w-9 shrink-0 rounded-full bg-violet text-accent-ink flex items-center justify-center text-sm font-bold">{initials}</div>
+          <div className="min-w-0 flex-1">
+            <p className="text-sm font-semibold truncate">{currentUser.name}</p>
+            <p className="text-xs text-ink-3">Level {progress.level}</p>
           </div>
-
+          <button onClick={handleLogout} title="Sign out" aria-label="Sign out" className="p-1.5 rounded-lg text-ink-3 hover:text-critical hover:bg-critical/10 cursor-pointer">
+            <LogOut className="w-[18px] h-[18px]" />
+          </button>
         </div>
+      </aside>
+
+      {/* Mobile top bar */}
+      <header className="lg:hidden sticky top-0 z-30 flex items-center gap-3 border-b border-line bg-bg/90 backdrop-blur px-4 py-3">
+        <div className="h-9 w-9 rounded-xl bg-accent flex items-center justify-center">
+          <FlaskConical className="w-[18px] h-[18px] text-accent-ink" />
+        </div>
+        <p className="font-extrabold tracking-tight flex-1">LabMaster</p>
+        {isSimulationMode && <span className="rounded-full border border-xp/30 bg-xp/10 px-2.5 py-1 text-xs font-bold text-xp">Demo AI</span>}
+        <button onClick={handleLogout} aria-label="Sign out" className="p-2 rounded-lg text-ink-3 hover:text-critical cursor-pointer">
+          <LogOut className="w-[18px] h-[18px]" />
+        </button>
       </header>
 
-      {/* Main Container Core */}
-      <main className="flex-grow max-w-7xl w-full mx-auto px-4 md:px-6 py-6 md:py-8 space-y-6">
-        
-        {/* Upper Segmented Navigation Deck */}
-        <div className="flex border-b border-slate-850">
-          <button
-            onClick={() => setActiveTab("dashboard")}
-            className={`px-5 py-3 text-sm font-bold font-sans tracking-wide border-b-2 cursor-pointer transition-all flex items-center gap-2 outline-none ${
-              activeTab === "dashboard"
-                ? "border-teal-400 text-teal-400"
-                : "border-transparent text-slate-400 hover:text-slate-250 hover:border-slate-850"
-            }`}
-          >
-            <TrendingUp className="w-4 h-4" /> Calibration Dashboard
-          </button>
-          
-          <button
-            onClick={() => setActiveTab("exercises")}
-            className={`px-5 py-3 text-sm font-bold font-sans tracking-wide border-b-2 cursor-pointer transition-all flex items-center gap-2 outline-none ${
-              activeTab === "exercises"
-                ? "border-teal-400 text-teal-400"
-                : "border-transparent text-slate-400 hover:text-slate-250 hover:border-slate-850"
-            }`}
-          >
-            <Layers className="w-4 h-4" /> Lab Specimen Simulator
-          </button>
-
-          <button
-            onClick={() => setActiveTab("chat")}
-            className={`px-5 py-3 text-sm font-bold font-sans tracking-wide border-b-2 cursor-pointer transition-all flex items-center gap-2 outline-none ${
-              activeTab === "chat"
-                ? "border-teal-400 text-teal-400"
-                : "border-transparent text-slate-400 hover:text-slate-250 hover:border-slate-850"
-            }`}
-          >
-            <MessageSquare className="w-4 h-4" /> MLS AI Professor Q&A
-          </button>
-        </div>
-
-        {/* Selected Component Viewport */}
-        <div className="min-h-[500px]">
+      <main className="flex-1 lg:ml-64 min-w-0">
+        <div className="mx-auto max-w-6xl px-4 sm:px-6 lg:px-10 pt-6 lg:pt-9 pb-28 lg:pb-12">
           <AnimatePresence mode="wait">
-            {activeTab === "dashboard" && (
-              <motion.div
-                key="dashboard"
-                initial={{ opacity: 0, y: 15 }}
-                animate={{ opacity: 1, y: 0 }}
-                exit={{ opacity: 0, y: -15 }}
-                transition={{ duration: 0.25 }}
-              >
-                <StatsDashboard 
-                  progress={progress} 
-                  onClaimGoal={handleClaimGoalReward} 
+            <motion.div
+              key={activeTab}
+              initial={{ opacity: 0, y: 10 }}
+              animate={{ opacity: 1, y: 0 }}
+              exit={{ opacity: 0, y: -6 }}
+              transition={{ duration: 0.2 }}
+            >
+              {activeTab === "dashboard" && (
+                <StatsDashboard
+                  progress={progress}
+                  userName={currentUser.name}
+                  onClaimGoal={handleClaimGoalReward}
                   allBadges={INITIAL_BADGES}
+                  onStartCase={startCase}
+                  onNavigate={setActiveTab}
                 />
-              </motion.div>
-            )}
+              )}
 
-            {activeTab === "exercises" && (
-              <motion.div
-                key="exercises"
-                initial={{ opacity: 0, y: 15 }}
-                animate={{ opacity: 1, y: 0 }}
-                exit={{ opacity: 0, y: -15 }}
-                transition={{ duration: 0.25 }}
-              >
-                <QuizExercise 
+              {activeTab === "simulator" && (
+                <QuizExercise
                   onAwardXp={handleAwardXpOnExerciseScore}
                   onIncrementGoal={handleIncrementGoalValue}
                   studyMaterials={studyMaterials}
+                  pendingCategory={pendingCategory}
+                  onPendingCategoryHandled={() => setPendingCategory(null)}
                 />
-              </motion.div>
-            )}
+              )}
 
-            {activeTab === "chat" && (
-              <motion.div
-                key="chat"
-                initial={{ opacity: 0, y: 15 }}
-                animate={{ opacity: 1, y: 0 }}
-                exit={{ opacity: 0, y: -15 }}
-                transition={{ duration: 0.25 }}
-                className="space-y-6"
-              >
-                {/* Professor clear option info */}
-                <div className="bg-slate-900 border border-slate-850 rounded-xl p-4 flex justify-between items-center gap-4">
-                  <div className="text-xs text-slate-400 space-y-0.5">
-                    <p className="font-semibold text-slate-300">Consultation Session Active</p>
-                    <p className="font-sans text-slate-400">Discuss clinical results, test chemistry steps or ask hematology indicators.</p>
-                  </div>
-                  <button
-                    onClick={clearChatHistory}
-                    className="text-[11px] font-mono text-slate-450 hover:text-rose-400 hover:underline border border-dashed border-slate-800 hover:border-rose-500/20 px-2 py-1 rounded cursor-pointer transition-colors"
-                  >
-                    Clear Discussion Log
-                  </button>
-                </div>
+              {activeTab === "professor" && (
+                <MLSProfessorChat
+                  messages={messages}
+                  onSendMessage={handleSendMessage}
+                  isGeneratingMessage={isGenerating}
+                  onIncrementGoal={handleIncrementGoalValue}
+                  onClearHistory={clearChatHistory}
+                  materialCount={studyMaterials.length}
+                  onOpenLibrary={() => setActiveTab("library")}
+                />
+              )}
 
-                <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 items-start">
-                  {/* Left Column: RAG Study Library */}
-                  <div className="lg:col-span-4 space-y-6 lg:sticky lg:top-24">
-                    <RAGStudyLibrary 
-                      userId={userId!}
-                      studyMaterials={studyMaterials}
-                      onAddMaterial={(mat) => setStudyMaterials(prev => [mat, ...prev])}
-                      onRemoveMaterial={handleRemoveMaterial}
-                    />
-                  </div>
-
-                  {/* Right Column: AI Chat Console */}
-                  <div className="lg:col-span-8">
-                    <MLSProfessorChat 
-                      messages={messages} 
-                      onSendMessage={handleSendMessage} 
-                      isGeneratingMessage={isGenerating}
-                      onIncrementGoal={handleIncrementGoalValue}
-                    />
-                  </div>
-                </div>
-              </motion.div>
-            )}
+              {activeTab === "library" && (
+                <RAGStudyLibrary
+                  userId={userId!}
+                  studyMaterials={studyMaterials}
+                  onAddMaterial={(mat) => setStudyMaterials(prev => [mat, ...prev])}
+                  onRemoveMaterial={handleRemoveMaterial}
+                />
+              )}
+            </motion.div>
           </AnimatePresence>
         </div>
-
       </main>
 
-      {/* Futuristic Clinical Footer */}
-      <footer className="bg-slate-900 border-t border-slate-850 mt-12 py-8">
-        <div className="max-w-7xl mx-auto px-4 text-center space-y-3 font-normal">
-          <div className="flex justify-center items-center gap-6">
-            <span className="text-xs text-slate-500 hover:text-slate-200 cursor-help flex items-center gap-1">
-              🧬 Clinical Laboratory Accredited
-            </span>
-            <span className="text-xs text-slate-500 hover:text-slate-200 cursor-help flex items-center gap-1">
-              🧪 CLSI Compliant Layout
-            </span>
-            <span className="text-xs text-slate-500 hover:text-slate-200 cursor-help flex items-center gap-1">
-              📋 Grade Matrix Integrated
-            </span>
-          </div>
-          <p className="text-[11px] text-slate-600 font-sans leading-relaxed block">
-            Designed for educational support and sandbox practice. Values generated inside dynamic simulations are fictive for science pedagogy. 
-          </p>
-          <div className="text-[10px] font-mono text-slate-700">
-            © 2026 LabMaster AI Tutor Workspace • All telemetry calibrated
-          </div>
-        </div>
-      </footer>
-
-      {/* GAMIFIED MODAL DIALOGS */}
-      
-      {/* 1. Level Up Celebration Prompt */}
-      {levelUpModal !== null && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/85 backdrop-blur-md p-4 animate-fadeIn">
-          <div className="bg-slate-900 border-2 border-teal-400 rounded-3xl max-w-sm w-full p-8 text-center space-y-6 shadow-2xl relative overflow-hidden">
-            {/* Holographic glowing lines */}
-            <div className="absolute top-0 left-0 w-full h-2 bg-gradient-to-r from-teal-400 via-emerald-400 to-teal-400" />
-            
-            <div className="space-y-2">
-              <span className="text-4xl animate-bounce inline-block">🎓</span>
-              <h2 className="text-2xl font-black text-transparent bg-clip-text bg-gradient-to-r from-teal-400 to-emerald-450 font-sans tracking-tight">
-                Academic Promotion!
-              </h2>
-              <p className="text-xs font-mono text-slate-400 uppercase tracking-widest font-bold">Calibration Verified</p>
-            </div>
-
-            <div className="bg-slate-950/80 p-5 rounded-2xl border border-teal-500/20">
-              <p className="text-slate-300 font-sans leading-relaxed">
-                You have advanced in Academic Rank and successfully elevated to:
-              </p>
-              <div className="text-2xl font-semibold font-mono text-teal-400 mt-2">
-                Level {levelUpModal}
-              </div>
-            </div>
-
-            <p className="text-[11px] text-zinc-400 font-sans">
-              New clinical and diagnostic specimen files have been dispatched to your active exercises queue.
-            </p>
-
+      {/* Mobile tab bar */}
+      <nav className="lg:hidden fixed inset-x-0 bottom-0 z-30 grid grid-cols-4 border-t border-line bg-surface/95 backdrop-blur pb-[env(safe-area-inset-bottom)]" aria-label="Main">
+        {NAV.map(({ id, short, icon: Icon }) => {
+          const active = activeTab === id;
+          return (
             <button
-              onClick={() => setLevelUpModal(null)}
-              className="w-full bg-teal-500 hover:bg-teal-400 text-slate-950 font-mono font-black py-3 rounded-xl cursor-pointer shadow-lg shadow-teal-500/20"
+              key={id}
+              onClick={() => setActiveTab(id)}
+              aria-current={active ? "page" : undefined}
+              className={`flex flex-col items-center gap-1 pt-2.5 pb-3 text-xs cursor-pointer ${active ? "text-accent font-bold" : "text-ink-3 font-medium"}`}
             >
-              Resume Lab Work
+              <Icon className="w-[22px] h-[22px]" />
+              {short}
             </button>
-          </div>
-        </div>
-      )}
+          );
+        })}
+      </nav>
 
-      {/* 2. New Badge Unlocked Modal */}
-      {newBadgeModal !== null && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/85 backdrop-blur-md p-4 animate-fadeIn">
-          <div className="bg-slate-900 border-2 border-amber-400 rounded-3xl max-w-sm w-full p-8 text-center space-y-6 shadow-2xl relative overflow-hidden">
-            <div className="absolute top-0 left-0 w-full h-2 bg-gradient-to-r from-amber-400 via-orange-400 to-amber-400" />
-            
-            <div className="space-y-2 animate-pulse">
-              <span className="text-4xl inline-block">🏆</span>
-              <h2 className="text-xl font-bold text-amber-400 font-sans">
-                Professional Badge Discovered!
-              </h2>
-              <p className="text-[10px] font-mono text-zinc-400 uppercase tracking-widest">Board Certificate Issued</p>
-            </div>
-
-            <div className="bg-slate-950/85 p-5 rounded-2xl border border-amber-500/20 space-y-3">
-              <div className="flex justify-center text-4xl bg-slate-900 p-2.5 rounded-xl border border-amber-500/10 max-w-max mx-auto shadow-inner">
-                {newBadgeModal.id === "chem_badge" ? "🧪" : newBadgeModal.id === "hem_badge" ? "🩸" : newBadgeModal.id === "micro_badge" ? "🧫" : newBadgeModal.id === "bb_badge" ? "💉" : "🧬"}
+      {/* Level up */}
+      <AnimatePresence>
+        {levelUpModal !== null && (
+          <motion.div
+            initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
+            className="fixed inset-0 z-50 flex items-center justify-center bg-bg/80 backdrop-blur-md p-4"
+            role="dialog" aria-modal="true" aria-labelledby="levelup-title"
+          >
+            <motion.div initial={{ scale: 0.92, y: 12 }} animate={{ scale: 1, y: 0 }} className="card max-w-sm w-full p-8 text-center space-y-5 border-accent/40">
+              <div className="mx-auto h-16 w-16 rounded-2xl bg-accent/15 flex items-center justify-center">
+                <GraduationCap className="w-8 h-8 text-accent" />
               </div>
-              <div>
-                <h3 className="text-base font-bold text-slate-105">{newBadgeModal.name}</h3>
-                <p className="text-xs text-zinc-300 mt-1 font-sans leading-relaxed">{newBadgeModal.description}</p>
+              <div className="space-y-1">
+                <p className="eyebrow text-accent">Level up</p>
+                <h2 id="levelup-title" className="text-3xl font-extrabold tracking-tight">Level {levelUpModal}</h2>
+                <p className="text-sm text-ink-2">Nice work — harder cases are now in your rotation.</p>
               </div>
-            </div>
+              <button onClick={() => setLevelUpModal(null)} className="btn-primary w-full">Keep going</button>
+            </motion.div>
+          </motion.div>
+        )}
+      </AnimatePresence>
 
-            <button
-              onClick={() => setNewBadgeModal(null)}
-              className="w-full bg-amber-400 hover:bg-amber-300 text-slate-950 font-mono font-bold py-3 rounded-xl cursor-pointer shadow-lg shadow-amber-500/25"
-            >
-              Pin to Credential Board
-            </button>
-          </div>
-        </div>
-      )}
-
+      {/* New badge */}
+      <AnimatePresence>
+        {newBadgeModal !== null && (
+          <motion.div
+            initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
+            className="fixed inset-0 z-50 flex items-center justify-center bg-bg/80 backdrop-blur-md p-4"
+            role="dialog" aria-modal="true" aria-labelledby="badge-title"
+          >
+            <motion.div initial={{ scale: 0.92, y: 12 }} animate={{ scale: 1, y: 0 }} className="card max-w-sm w-full p-8 text-center space-y-5 border-xp/40">
+              <div className="mx-auto h-16 w-16 rounded-2xl bg-xp/15 flex items-center justify-center">
+                <Trophy className="w-8 h-8 text-xp" />
+              </div>
+              <div className="space-y-1">
+                <p className="eyebrow text-xp flex items-center justify-center gap-1.5"><Sparkles className="w-3.5 h-3.5" /> Badge earned</p>
+                <h2 id="badge-title" className="text-2xl font-extrabold tracking-tight">{newBadgeModal.name}</h2>
+                <p className="text-sm text-ink-2 leading-relaxed">{newBadgeModal.description}</p>
+              </div>
+              <button onClick={() => setNewBadgeModal(null)} className="btn-primary w-full bg-xp hover:bg-xp/90">Add to my badges</button>
+            </motion.div>
+          </motion.div>
+        )}
+      </AnimatePresence>
     </div>
   );
 }

@@ -684,7 +684,7 @@ Prof. LabMaster has loaded your diagnostic microscopic photo / workspace capture
 To interactively discuss this: Can you clarify if this sample slide was drawn under clean venipuncture, or what specific bacterial colonies/smears you expected to review at 100x oil immersion? Let's analyze it!`;
       } else if (lastUserMsg.includes("potassium") || lastUserMsg.includes("electrolyte") || lastUserMsg.includes("hemolysis")) {
         responseText = `### 🧬 Prof. LabMaster says: Excellent question about electrolyte imbalances!
-In Medical Laboratory Science, **Potassium ($K^+$)** is the single most dangerous electrolyte when falsely elevated.
+In Medical Laboratory Science, **Potassium (K⁺)** is the single most dangerous electrolyte when falsely elevated.
 1. **Intracellular vs. Extracellular Concentration**: Inside RBCs, potassium is around **150 mmol/L** compared to only **3.5 - 5.0 mmol/L** in normal serum.
 2. **Hemolysis**: If a red blood cell lyses due to rough drawing, dropping or drawing through a narrow line (pre-analytical error), just a fraction of cells releasing potassium alters the test.
 3. **Delta Checks**: LIS systems catch this via a Delta Check (comparing the specimen against the patient's previous raw data within a specified hour range).

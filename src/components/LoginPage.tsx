@@ -1,6 +1,6 @@
 import React, { useState } from "react";
 import { motion, AnimatePresence } from "motion/react";
-import { Mail, User, ShieldAlert, LogIn, KeyRound, Loader2, CheckCircle2 } from "lucide-react";
+import { Mail, User, ShieldAlert, KeyRound, Loader2, CheckCircle2, FlaskConical, TestTube, GraduationCap, Trophy, ArrowRight } from "lucide-react";
 import { supabase } from "../lib/supabase";
 
 // Signs in or creates an account with Supabase Auth. App.tsx picks up the new
@@ -30,7 +30,7 @@ export default function LoginPage() {
     }
 
     if (isSignUp && password.length < 8) {
-      setError("Passcode must be at least 8 characters.");
+      setError("Password must be at least 8 characters.");
       return;
     }
 
@@ -67,7 +67,7 @@ export default function LoginPage() {
     setError(null);
     setNotice(null);
     if (!email) {
-      setError("Enter your email above first, then choose \"Forgot passcode\".");
+      setError("Enter your email above first, then choose \"Forgot password\".");
       return;
     }
     const { error: resetError } = await supabase.auth.resetPasswordForEmail(email, {
@@ -77,192 +77,123 @@ export default function LoginPage() {
     else setNotice(`If an account exists for ${email}, a reset link is on its way.`);
   };
 
+  const field = "w-full rounded-xl border border-line bg-surface-2 pl-11 pr-4 py-3 text-[15px] text-ink placeholder:text-ink-3 outline-none focus:border-accent transition-colors";
+
   return (
-    <div className="min-h-screen bg-slate-950 text-slate-100 flex items-center justify-center p-4 relative overflow-hidden font-sans">
-      {/* Decorative background grid and ambient radial light */}
-      <div className="absolute inset-0 bg-[radial-gradient(circle_at_center,rgba(20,184,166,0.06)_0,transparent_60%)] pointer-events-none" />
-      <div 
-        className="absolute inset-0 opacity-[0.02] pointer-events-none"
-        style={{
-          backgroundImage: `radial-gradient(circle, #2dd4bf 1px, transparent 1px)`,
-          backgroundSize: "24px 24px",
-        }}
-      />
-
-      <div className="w-full max-w-md z-10">
-        
-        {/* Brand/Logo Center Area */}
-        <div className="text-center mb-8 space-y-3">
-          <div className="mx-auto h-12 w-12 bg-gradient-to-tr from-teal-500 to-emerald-400 rounded-xl flex items-center justify-center text-2xl shadow-lg shadow-teal-500/25 border border-teal-400">
-            🔬
+    <div className="min-h-screen lg:grid lg:grid-cols-[1fr_minmax(440px,520px)]">
+      {/* Brand panel (desktop) */}
+      <aside className="relative hidden lg:flex flex-col justify-between overflow-hidden border-r border-line bg-surface p-12">
+        <div className="pointer-events-none absolute -top-40 -left-40 h-[520px] w-[520px] rounded-full bg-accent/12 blur-3xl" />
+        <div className="relative flex items-center gap-3">
+          <div className="h-11 w-11 rounded-xl bg-accent flex items-center justify-center">
+            <FlaskConical className="w-6 h-6 text-accent-ink" />
           </div>
-          <div className="space-y-1">
-            <h1 className="text-3xl font-extrabold tracking-tight bg-gradient-to-r from-teal-200 via-slate-100 to-teal-400 bg-clip-text text-transparent font-sans">
-              LabMaster AI
-            </h1>
-            <p className="text-xs text-slate-400 font-mono tracking-wider">
-              AUTHORIZED ACCESS ONLY • CLINICAL PORTAL
-            </p>
-          </div>
+          <span className="text-xl font-extrabold tracking-tight">LabMaster</span>
         </div>
+        <div className="relative max-w-lg space-y-8">
+          <h1 className="text-4xl font-extrabold tracking-tight leading-tight">
+            Train like you're already on the <span className="text-accent">lab bench</span>.
+          </h1>
+          <ul className="space-y-5">
+            {[
+              [TestTube, "Realistic patient cases", "Read real-looking analyzer reports and catch the critical values."],
+              [GraduationCap, "An AI professor on call", "Ask anything — answers grounded in your own study files."],
+              [Trophy, "Progress that sticks", "XP, streaks and badges across all five MLS disciplines."]
+            ].map(([Icon, title, text]: any) => (
+              <li key={title} className="flex gap-4">
+                <span className="h-10 w-10 shrink-0 rounded-xl bg-accent/14 flex items-center justify-center"><Icon className="w-5 h-5 text-accent" /></span>
+                <div>
+                  <p className="font-bold">{title}</p>
+                  <p className="text-sm text-ink-2 mt-0.5">{text}</p>
+                </div>
+              </li>
+            ))}
+          </ul>
+        </div>
+        <p className="relative text-sm text-ink-3">For Medical Laboratory Science students. Simulated data, real learning.</p>
+      </aside>
 
-        {/* Primary Interactive Module Container */}
-        <div className="bg-slate-900/80 border border-slate-800 rounded-2xl p-6 md:p-8 backdrop-blur-xl shadow-2xl relative">
+      {/* Form */}
+      <main className="flex min-h-screen items-center justify-center p-5 sm:p-10">
+        <div className="w-full max-w-md space-y-7">
+          <div className="lg:hidden flex items-center gap-3">
+            <div className="h-10 w-10 rounded-xl bg-accent flex items-center justify-center">
+              <FlaskConical className="w-5 h-5 text-accent-ink" />
+            </div>
+            <span className="text-lg font-extrabold tracking-tight">LabMaster</span>
+          </div>
+
+          <div className="space-y-1.5">
+            <h2 className="text-2xl font-extrabold tracking-tight">{isSignUp ? "Create your account" : "Welcome back"}</h2>
+            <p className="text-[15px] text-ink-2">{isSignUp ? "Start training in under a minute." : "Sign in to pick up where you left off."}</p>
+          </div>
+
+          <div className="grid grid-cols-2 rounded-xl border border-line bg-surface p-1" role="tablist">
+            {[["Sign in", false], ["Create account", true]].map(([label, up]) => (
+              <button
+                key={String(label)}
+                type="button"
+                role="tab"
+                aria-selected={isSignUp === up}
+                onClick={() => { setIsSignUp(up as boolean); setError(null); setNotice(null); }}
+                className={`rounded-lg py-2.5 text-sm font-bold transition-colors cursor-pointer ${isSignUp === up ? "bg-surface-2 text-ink" : "text-ink-3 hover:text-ink-2"}`}
+              >
+                {label}
+              </button>
+            ))}
+          </div>
 
           <AnimatePresence mode="wait">
             {error && (
-              <motion.div
-                initial={{ opacity: 0, y: -10 }}
-                animate={{ opacity: 1, y: 0 }}
-                exit={{ opacity: 0, y: -10 }}
-                className="mb-6 p-3.5 rounded-xl border border-rose-500/20 bg-rose-500/10 text-rose-300 text-xs flex items-center gap-2.5 font-mono"
-              >
-                <ShieldAlert className="w-4 h-4 flex-shrink-0 text-rose-400" />
-                <span className="flex-1">{error}</span>
+              <motion.div initial={{ opacity: 0, y: -6 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0 }} role="alert"
+                className="rounded-xl border border-critical/40 bg-critical/10 p-3.5 text-sm text-critical flex items-start gap-2.5">
+                <ShieldAlert className="w-4 h-4 shrink-0 mt-0.5" /> {error}
               </motion.div>
             )}
           </AnimatePresence>
-
           {notice && (
-            <div className="mb-6 p-3.5 rounded-xl border border-emerald-500/20 bg-emerald-500/10 text-emerald-300 text-xs flex items-center gap-2.5 font-mono">
-              <CheckCircle2 className="w-4 h-4 flex-shrink-0 text-emerald-400" />
-              <span className="flex-1">{notice}</span>
+            <div className="rounded-xl border border-normal/40 bg-normal/10 p-3.5 text-sm text-normal flex items-start gap-2.5" role="status">
+              <CheckCircle2 className="w-4 h-4 shrink-0 mt-0.5" /> {notice}
             </div>
           )}
 
-          {/* Form Section */}
           <form onSubmit={handleSubmit} className="space-y-4">
-            
-            {/* Action State Tabs */}
-            <div className="grid grid-cols-2 p-1 bg-slate-950/80 rounded-xl border border-slate-800 mb-2">
-              <button
-                type="button"
-                onClick={() => {
-                  setIsSignUp(false);
-                  setError(null);
-                }}
-                className={`py-2 text-xs font-bold font-sans rounded-lg transition-all ${
-                  !isSignUp 
-                    ? "bg-slate-800 text-teal-400 shadow-sm" 
-                    : "text-slate-400 hover:text-slate-200"
-                }`}
-              >
-                Sign In
-              </button>
-              <button
-                type="button"
-                onClick={() => {
-                  setIsSignUp(true);
-                  setError(null);
-                }}
-                className={`py-2 text-xs font-bold font-sans rounded-lg transition-all ${
-                  isSignUp 
-                    ? "bg-slate-800 text-teal-400 shadow-sm" 
-                    : "text-slate-400 hover:text-slate-200"
-                }`}
-              >
-                Create Account
-              </button>
-            </div>
-
-            {/* If Sign Up: Request Display Name */}
             {isSignUp && (
               <div className="space-y-1.5">
-                <label className="text-[10px] font-mono font-bold uppercase text-slate-400 tracking-wider">
-                  Full Name
-                </label>
+                <label htmlFor="name" className="text-sm font-semibold text-ink-2">Full name</label>
                 <div className="relative">
-                  <User className="absolute left-3.5 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-500" />
-                  <input
-                    type="text"
-                    required
-                    placeholder="E.g., Dr. Alex Reed, MLS"
-                    value={name}
-                    onChange={(e) => setName(e.target.value)}
-                    className="w-full bg-slate-950/80 border border-slate-800 rounded-xl pl-10 pr-4 py-2.5 text-sm text-slate-200 focus:outline-none focus:border-teal-500/50 focus:ring-1 focus:ring-teal-500/20 transition-all font-sans"
-                  />
+                  <User className="absolute left-3.5 top-1/2 -translate-y-1/2 w-[18px] h-[18px] text-ink-3" />
+                  <input id="name" type="text" required autoComplete="name" placeholder="Alex Reed" value={name} onChange={e => setName(e.target.value)} className={field} />
                 </div>
               </div>
             )}
-
-            {/* Email Field */}
             <div className="space-y-1.5">
-              <label className="text-[10px] font-mono font-bold uppercase text-slate-400 tracking-wider">
-                Institutional Email
-              </label>
+              <label htmlFor="email" className="text-sm font-semibold text-ink-2">Email</label>
               <div className="relative">
-                <Mail className="absolute left-3.5 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-500" />
-                <input
-                  type="email"
-                  required
-                  placeholder="name@clinicalnet.org"
-                  value={email}
-                  onChange={(e) => setEmail(e.target.value)}
-                  className="w-full bg-slate-950/80 border border-slate-800 rounded-xl pl-10 pr-4 py-2.5 text-sm text-slate-200 focus:outline-none focus:border-teal-500/50 focus:ring-1 focus:ring-teal-500/20 transition-all font-sans"
-                />
+                <Mail className="absolute left-3.5 top-1/2 -translate-y-1/2 w-[18px] h-[18px] text-ink-3" />
+                <input id="email" type="email" required autoComplete="email" placeholder="you@school.edu" value={email} onChange={e => setEmail(e.target.value)} className={field} />
               </div>
             </div>
-
-            {/* Password Field */}
             <div className="space-y-1.5">
-              <label className="text-[10px] font-mono font-bold uppercase text-slate-400 tracking-wider">
-                Laboratory Security Passcode
-              </label>
+              <div className="flex items-center">
+                <label htmlFor="password" className="flex-1 text-sm font-semibold text-ink-2">Password</label>
+                {!isSignUp && (
+                  <button type="button" onClick={handleForgotPassword} className="text-sm font-semibold text-accent hover:underline cursor-pointer">Forgot password?</button>
+                )}
+              </div>
               <div className="relative">
-                <KeyRound className="absolute left-3.5 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-500" />
-                <input
-                  type="password"
-                  required
-                  placeholder="••••••••••••"
-                  value={password}
-                  onChange={(e) => setPassword(e.target.value)}
-                  className="w-full bg-slate-950/80 border border-slate-800 rounded-xl pl-10 pr-4 py-2.5 text-sm text-slate-200 focus:outline-none focus:border-teal-500/50 focus:ring-1 focus:ring-teal-500/20 transition-all font-sans"
-                />
+                <KeyRound className="absolute left-3.5 top-1/2 -translate-y-1/2 w-[18px] h-[18px] text-ink-3" />
+                <input id="password" type="password" required autoComplete={isSignUp ? "new-password" : "current-password"} placeholder={isSignUp ? "At least 8 characters" : "Your password"} value={password} onChange={e => setPassword(e.target.value)} className={field} />
               </div>
             </div>
-
-            {/* Submit Action Block */}
-            <button
-              type="submit"
-              disabled={loading}
-              className="w-full bg-gradient-to-r from-teal-500 to-emerald-500 hover:from-teal-400 hover:to-emerald-400 text-slate-950 font-extrabold text-sm py-3 px-4 rounded-xl shadow-lg shadow-teal-500/10 cursor-pointer flex items-center justify-center gap-2 transform active:scale-[0.98] transition-all disabled:opacity-50"
-            >
-              {loading ? (
-                <>
-                  <Loader2 className="w-4 h-4 animate-spin" />
-                  <span>Verifying Lab Credentials...</span>
-                </>
-              ) : (
-                <>
-                  <LogIn className="w-4 h-4" />
-                  <span>{isSignUp ? "Generate License & Proceed" : "Sign In to Working Session"}</span>
-                </>
-              )}
+            <button type="submit" disabled={loading} className="btn-primary w-full py-3.5 text-[15px]">
+              {loading ? <><Loader2 className="w-4 h-4 animate-spin" /> {isSignUp ? "Creating account…" : "Signing in…"}</> : <>{isSignUp ? "Create account" : "Sign in"} <ArrowRight className="w-[18px] h-[18px]" /></>}
             </button>
-
-            {!isSignUp && (
-              <button
-                type="button"
-                onClick={handleForgotPassword}
-                className="w-full text-[11px] font-mono text-slate-400 hover:text-teal-400 hover:underline cursor-pointer"
-              >
-                Forgot passcode?
-              </button>
-            )}
-
           </form>
 
-          {/* Privacy Disclaimer footer */}
-          <p className="text-[10px] text-center text-slate-500 font-mono mt-6 leading-relaxed">
-            Authorized for medical laboratory sciences training.
-            <br />
-            Your progress, chats and study files are saved to your account.
-          </p>
-
+          <p className="text-sm text-ink-3 text-center">Your progress, chats and study files are saved to your account.</p>
         </div>
-
-      </div>
-
+      </main>
     </div>
   );
 }

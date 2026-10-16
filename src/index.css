@@ -1,5 +1,58 @@
 @import "tailwindcss";
 
+/* LabMaster design tokens — mirrors the "LabMaster Color" collection in the Figma mockup. */
+@theme {
+  --font-sans: "Plus Jakarta Sans", ui-sans-serif, system-ui, sans-serif;
+  --font-mono: "JetBrains Mono", ui-monospace, SFMono-Regular, monospace;
+
+  --color-bg: #0a101f;
+  --color-surface: #111a2c;
+  --color-surface-2: #172338;
+  --color-line: #24324a;
+
+  --color-ink: #e8eef8;
+  --color-ink-2: #a3b1c6;
+  --color-ink-3: #7d8da6;
+
+  --color-accent: #2dd4bf;
+  --color-accent-ink: #042a25;
+  --color-xp: #fbbf24;
+  --color-violet: #a78bfa;
+
+  /* Lab flags carry meaning — use only for result status. */
+  --color-critical: #fb7185;
+  --color-high: #f59e0b;
+  --color-low: #60a5fa;
+  --color-normal: #34d399;
+}
+
+@layer base {
+  html {
+    color-scheme: dark;
+  }
+  body {
+    @apply bg-bg text-ink font-sans antialiased;
+  }
+  :focus-visible {
+    @apply outline-2 outline-offset-2 outline-accent;
+  }
+}
+
+@layer components {
+  .card {
+    @apply rounded-2xl border border-line bg-surface;
+  }
+  .btn-primary {
+    @apply inline-flex items-center justify-center gap-2 rounded-xl bg-accent px-5 py-3 text-sm font-bold text-accent-ink transition-colors hover:bg-accent/90 disabled:cursor-not-allowed disabled:opacity-50 cursor-pointer;
+  }
+  .btn-secondary {
+    @apply inline-flex items-center justify-center gap-2 rounded-xl border border-line bg-surface-2 px-4 py-3 text-sm font-semibold text-ink transition-colors hover:border-ink-3 disabled:cursor-not-allowed disabled:opacity-50 cursor-pointer;
+  }
+  .eyebrow {
+    @apply text-xs font-bold uppercase tracking-[0.08em] text-ink-3;
+  }
+}
+
 @layer utilities {
   @keyframes fadeIn {
     from { opacity: 0; transform: translateY(6px); }
@@ -9,7 +62,6 @@
     from { opacity: 0; transform: translateY(14px); }
     to { opacity: 1; transform: translateY(0); }
   }
-  
   .animate-fadeIn {
     animation: fadeIn 0.35s cubic-bezier(0.16, 1, 0.3, 1) forwards;
   }
@@ -17,3 +69,15 @@
     animation: slideUp 0.45s cubic-bezier(0.16, 1, 0.3, 1) forwards;
   }
 }
+
+/* Chat markdown */
+.prose-lab { @apply text-[15px] leading-7 text-ink-2; }
+.prose-lab p { @apply my-2; }
+.prose-lab strong { @apply font-semibold text-ink; }
+.prose-lab h1, .prose-lab h2, .prose-lab h3 { @apply mt-4 mb-2 font-bold text-ink; }
+.prose-lab h3 { @apply text-base; }
+.prose-lab ul { @apply my-2 list-disc pl-5; }
+.prose-lab ol { @apply my-2 list-decimal pl-5; }
+.prose-lab li { @apply my-1; }
+.prose-lab code { @apply rounded bg-surface-2 px-1.5 py-0.5 font-mono text-[13px] text-accent; }
+.prose-lab a { @apply text-accent underline; }

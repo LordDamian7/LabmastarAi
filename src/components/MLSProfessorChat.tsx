@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef } from "react";
 import { Message } from "../types";
-import { Mic, MicOff, Send, Volume2, VolumeX, Sparkles, AlertCircle, HelpCircle, CornerDownLeft, Play, Square, Loader2 } from "lucide-react";
+import { Mic, MicOff, Send, Volume2, VolumeX, Loader2, GraduationCap, Trash2, BookOpen, Keyboard } from "lucide-react";
 import ReactMarkdown from "react-markdown";
 
 interface MLSProfessorChatProps {
@@ -8,13 +8,19 @@ interface MLSProfessorChatProps {
   onSendMessage: (text: string) => Promise<void>;
   isGeneratingMessage: boolean;
   onIncrementGoal: (actionType: string) => void;
+  onClearHistory: () => void;
+  materialCount: number;
+  onOpenLibrary: () => void;
 }
 
 export default function MLSProfessorChat({ 
   messages, 
   onSendMessage, 
   isGeneratingMessage,
-  onIncrementGoal
+  onIncrementGoal,
+  onClearHistory,
+  materialCount,
+  onOpenLibrary
 }: MLSProfessorChatProps) {
   const [inputText, setInputText] = useState("");
   const [speechMode, setSpeechMode] = useState<"text" | "voice">("text");
@@ -36,7 +42,7 @@ export default function MLSProfessorChat({
     "Explain Delta Check logic",
     "Hemolysis cause of fake hyperkalemia",
     "How to differentiate E. coli on agar?",
-    "ABO typing forward vs reverse discrep",
+    "ABO forward vs reverse typing discrepancies",
     "What are toxic granulations & vacuolization?"
   ];
 
@@ -81,19 +87,15 @@ export default function MLSProfessorChat({
     };
   }, []);
 
-  // Monitor the latest assistant message and trigger TTS if in voice mode or custom unmute
+  // In voice mode, read each new reply aloud once it has finished streaming.
   useEffect(() => {
-    if (messages.length === 0) return;
+    if (isGeneratingMessage || messages.length === 0) return;
     const latest = messages[messages.length - 1];
-    
-    // Check if it's the assistant's message and we haven't spoken it yet
-    if (latest.role === "assistant" && ttsMessageRef.current !== latest.id) {
-      ttsMessageRef.current = latest.id;
-      if ((speechMode === "voice" || !muteTts) && !muteTts) {
-        speakResponse(latest.content);
-      }
-    }
-  }, [messages, speechMode, muteTts]);
+    if (latest.role !== "assistant" || ttsMessageRef.current === latest.id) return;
+    ttsMessageRef.current = latest.id;
+    if (speechMode === "voice" && !muteTts) speakResponse(latest.content);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [messages, isGeneratingMessage, speechMode, muteTts]);
 
   // Keep chat scrolled down
   useEffect(() => {
@@ -174,263 +176,165 @@ export default function MLSProfessorChat({
   };
 
   return (
-    <div className="flex flex-col h-[650px] bg-slate-900 border border-slate-800 rounded-xl overflow-hidden relative">
-      {/* Header Panel with Mode Toggle */}
-      <div className="p-4 border-b border-slate-800 bg-slate-950/60 flex items-center justify-between">
-        <div className="flex items-center gap-2">
-          <div className="h-2 w-2 rounded-full bg-teal-400 animate-pulse" />
-          <h2 className="font-sans font-bold text-slate-100 flex items-center gap-1.5 text-base">
-            Professor LabMaster <span className="text-xs font-mono text-teal-400 font-normal">TUTOR</span>
-          </h2>
-        </div>
-
-        <div className="flex items-center bg-slate-900 border border-slate-800 rounded-lg p-0.5">
-          <button
-            onClick={() => {
-              setSpeechMode("text");
-              stopSpeaking();
-            }}
-            className={`px-3 py-1.5 text-xs font-mono font-bold rounded-md cursor-pointer transition-colors ${
-              speechMode === "text" 
-                ? "bg-teal-500 text-slate-950 shadow-md shadow-teal-500/10" 
-                : "text-slate-400 hover:text-slate-200"
-            }`}
-          >
-            TEXT MODE
-          </button>
-          <button
-            onClick={() => {
-              setSpeechMode("voice");
-              setMuteTts(false);
-            }}
-            className={`px-3 py-1.5 text-xs font-mono font-bold rounded-md cursor-pointer transition-colors flex items-center gap-1.5 ${
-              speechMode === "voice" 
-                ? "bg-gradient-to-r from-teal-500 to-emerald-400 text-slate-950 shadow-md shadow-emerald-500/10" 
-                : "text-slate-400 hover:text-slate-200"
-            }`}
-          >
-            <Mic className="w-3.5 h-3.5" /> VOICE MODE
+    <div className="card flex flex-col overflow-hidden h-[calc(100dvh-10.5rem)] lg:h-[calc(100vh-4.5rem)] min-h-[480px]">
+      {/* Header */}
+      <div className="flex flex-wrap items-center gap-3 border-b border-line px-4 sm:px-5 py-3.5">
+        <span className="h-10 w-10 rounded-xl bg-accent/14 flex items-center justify-center">
+          <GraduationCap className="w-5 h-5 text-accent" />
+        </span>
+        <div className="flex-1 min-w-0">
+          <h1 className="text-base font-bold leading-tight">AI Professor</h1>
+          <button onClick={onOpenLibrary} className="text-xs text-ink-3 hover:text-accent inline-flex items-center gap-1 cursor-pointer">
+            <BookOpen className="w-3.5 h-3.5" />
+            {materialCount > 0 ? `Using ${materialCount} study file${materialCount === 1 ? "" : "s"}` : "Add study files for grounded answers"}
           </button>
         </div>
+        <div className="flex items-center rounded-xl border border-line bg-surface-2 p-1" role="group" aria-label="Input mode">
+          <button
+            onClick={() => { setSpeechMode("text"); stopSpeaking(); }}
+            aria-pressed={speechMode === "text"}
+            className={`inline-flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-xs font-bold cursor-pointer ${speechMode === "text" ? "bg-accent text-accent-ink" : "text-ink-2 hover:text-ink"}`}
+          >
+            <Keyboard className="w-3.5 h-3.5" /> Type
+          </button>
+          <button
+            onClick={() => { setSpeechMode("voice"); setMuteTts(false); }}
+            aria-pressed={speechMode === "voice"}
+            className={`inline-flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-xs font-bold cursor-pointer ${speechMode === "voice" ? "bg-accent text-accent-ink" : "text-ink-2 hover:text-ink"}`}
+          >
+            <Mic className="w-3.5 h-3.5" /> Voice
+          </button>
+        </div>
+        {messages.length > 0 && (
+          <button onClick={onClearHistory} title="Clear conversation" aria-label="Clear conversation" className="p-2 rounded-lg text-ink-3 hover:text-critical hover:bg-critical/10 cursor-pointer">
+            <Trash2 className="w-[18px] h-[18px]" />
+          </button>
+        )}
       </div>
 
-      {speechMode === "voice" && (
-        <div className="bg-gradient-to-r from-teal-950/20 to-emerald-950/20 border-b border-teal-500/10 p-3 text-xs text-slate-300 flex items-center gap-2">
-          <Sparkles className="w-4 h-4 text-emerald-400 flex-shrink-0" />
-          <span>Interactive Speech Active. You can talk to the professor or listen to guidelines live!</span>
-        </div>
-      )}
-
-      {/* Main Conversation Canvas */}
-      <div className="flex-grow overflow-y-auto p-4 space-y-4 font-normal bg-gradient-to-b from-slate-900 via-slate-900 to-slate-950/40">
-        
-        {/* If no message, render welcoming screen */}
+      {/* Conversation */}
+      <div className="flex-1 overflow-y-auto px-4 sm:px-6 py-5 space-y-5">
         {messages.length === 0 && (
-          <div className="text-center py-10 max-w-md mx-auto space-y-4">
-            <div className="h-16 w-16 bg-teal-950/40 border border-teal-400/20 rounded-2xl flex items-center justify-center text-3xl mx-auto shadow-lg shadow-teal-500/5">
-              🔬
-            </div>
-            
-            <div className="space-y-1">
-              <h3 className="text-base font-bold text-slate-200">Laboratory Science Assistant</h3>
-              <p className="text-xs text-slate-400 leading-relaxed font-sans">
-                Greetings, Clinical Student! I can assist you with understanding laboratory findings, hematocrit indices, culture patterns, or test troubleshooting. 
+          <div className="max-w-lg mx-auto text-center pt-6 sm:pt-12 space-y-5">
+            <span className="mx-auto h-14 w-14 rounded-2xl bg-accent/14 flex items-center justify-center">
+              <GraduationCap className="w-7 h-7 text-accent" />
+            </span>
+            <div className="space-y-2">
+              <h2 className="text-xl font-bold">Ask your lab professor anything</h2>
+              <p className="text-[15px] text-ink-2 leading-relaxed">
+                Reference ranges, pre-analytical errors, stains, antibody panels — explained step by step, grounded in your study files when you add them.
               </p>
             </div>
-
-            <div className="border border-slate-800 p-3 rounded-xl bg-slate-950/50 text-left space-y-2">
-              <span className="text-[10px] font-mono text-slate-500 font-bold uppercase tracking-wider block">Suggested Questions</span>
-              <div className="flex flex-col gap-1.5">
-                {SHORTCUTS.slice(0, 3).map((v, idx) => (
-                  <button 
-                    key={idx} 
-                    onClick={() => handleShortcutClick(v)}
-                    className="text-xs text-left text-slate-300 bg-slate-900 hover:bg-slate-800 p-2 rounded-lg border border-slate-800 border-none transition-colors cursor-pointer block text-ellipsis overflow-hidden whitespace-nowrap"
-                  >
-                    💬 {v}
-                  </button>
-                ))}
-              </div>
+            <div className="grid gap-2 text-left">
+              {SHORTCUTS.slice(0, 4).map(v => (
+                <button
+                  key={v}
+                  onClick={() => handleShortcutClick(v)}
+                  className="rounded-xl border border-line bg-surface-2 px-4 py-3 text-sm font-medium text-ink-2 hover:border-accent/50 hover:text-ink transition-colors cursor-pointer"
+                >
+                  {v}
+                </button>
+              ))}
             </div>
           </div>
         )}
 
-        {messages.map((message) => {
+        {messages.map(message => {
           const isUser = message.role === "user";
+          if (isUser) {
+            return (
+              <div key={message.id} className="flex justify-end animate-fadeIn">
+                <p className="max-w-[85%] whitespace-pre-wrap rounded-2xl rounded-br-md bg-accent px-4 py-3 text-[15px] font-medium text-accent-ink">
+                  {message.content}
+                </p>
+              </div>
+            );
+          }
           return (
-            <div 
-              key={message.id} 
-              className={`flex ${isUser ? "justify-end" : "justify-start"} animate-fadeIn`}
-            >
-              <div 
-                className={`max-w-[85%] rounded-2xl p-4 text-sm relative group ${
-                  isUser 
-                    ? "bg-teal-500 text-slate-950 font-medium rounded-tr-none shadow-md shadow-teal-500/10" 
-                    : "bg-slate-950 border border-slate-800 text-slate-100 rounded-tl-none leading-relaxed font-sans"
-                }`}
-              >
-                {/* Meta details */}
-                <span className={`text-[9px] font-mono ${isUser ? "text-slate-950/60" : "text-slate-400"} block mb-1 uppercase tracking-wider font-bold`}>
-                  {isUser ? "Student Learner" : "Prof. LabMaster"}
-                </span>
-
-                {/* Body message */}
-                {isUser ? (
-                  <p className="whitespace-pre-wrap font-sans font-medium">{message.content}</p>
-                ) : (
-                  <div className="markdown-body font-sans text-slate-200 prose prose-invert overflow-x-auto text-[13.5px]">
-                    <ReactMarkdown>{message.content}</ReactMarkdown>
-                  </div>
-                )}
-
-                {/* Speak button for previous assistant statements */}
-                {!isUser && (
-                  <div className="flex justify-end gap-1.5 mt-2.5 pt-2 border-t border-slate-900/40 opacity-40 hover:opacity-100 transition-opacity">
-                    <button
-                      onClick={() => speakResponse(message.content)}
-                      className="text-[10px] font-mono hover:text-teal-400 flex items-center gap-1 cursor-pointer"
-                    >
-                      <Volume2 className="w-3 h-3" /> Read Aloud
-                    </button>
-                  </div>
-                )}
+            <div key={message.id} className="flex gap-3 animate-fadeIn">
+              <span className="h-8 w-8 shrink-0 rounded-lg bg-accent/14 flex items-center justify-center mt-0.5">
+                <GraduationCap className="w-4 h-4 text-accent" />
+              </span>
+              <div className="min-w-0 flex-1 max-w-[46rem]">
+                <div className="prose-lab overflow-x-auto">
+                  <ReactMarkdown>{message.content}</ReactMarkdown>
+                </div>
+                <button
+                  onClick={() => speakResponse(message.content)}
+                  className="mt-1 inline-flex items-center gap-1.5 text-xs font-medium text-ink-3 hover:text-accent cursor-pointer"
+                >
+                  <Volume2 className="w-3.5 h-3.5" /> Read aloud
+                </button>
               </div>
             </div>
           );
         })}
 
-        {/* Generation loader: shown until the first streamed words of the reply arrive */}
+        {/* Shown until the first streamed words of the reply arrive */}
         {isGeneratingMessage && messages[messages.length - 1]?.role !== "assistant" && (
-          <div className="flex justify-start animate-pulse">
-            <div className="bg-slate-950 border border-slate-800 rounded-2xl p-4 text-sm rounded-tl-none">
-              <span className="text-[9px] font-mono text-teal-400 block mb-1.0 font-bold uppercase tracking-wider">
-                Analyzing Clinical Specimen...
-              </span>
-              <div className="flex items-center gap-2">
-                <Loader2 className="w-4 h-4 text-teal-400 animate-spin" />
-                <span className="text-xs text-slate-400 font-sans">Professor is formulating clinical guidelines...</span>
-              </div>
-            </div>
+          <div className="flex gap-3" aria-live="polite">
+            <span className="h-8 w-8 shrink-0 rounded-lg bg-accent/14 flex items-center justify-center">
+              <GraduationCap className="w-4 h-4 text-accent" />
+            </span>
+            <span className="inline-flex items-center gap-2 text-sm text-ink-3">
+              <Loader2 className="w-4 h-4 animate-spin text-accent" /> Thinking…
+            </span>
           </div>
         )}
-
         <div ref={messagesEndRef} />
       </div>
 
-      {/* Voice Mode Visualizer / Central Console */}
-      {speechMode === "voice" && (
-        <div className="absolute inset-x-0 bottom-16 bg-slate-950 border-t border-slate-800/80 p-5 flex flex-col items-center justify-center space-y-4 animate-slideUp">
-          <div className="flex items-center gap-4">
-            {/* Pulsing micro button for direct trigger */}
-            <button
-              onClick={handleToggleListen}
-              className={`h-16 w-16 rounded-full flex items-center justify-center cursor-pointer transition-all border shadow-lg ${
-                !speechSupported 
-                  ? "bg-slate-900 border-slate-800 text-slate-600 cursor-not-allowed" 
-                  : isListening 
-                    ? "bg-rose-500 border-rose-300 text-slate-950 animate-ping" 
-                    : "bg-gradient-to-r from-teal-400 to-emerald-400 border-teal-200 text-slate-950 hover:shadow-teal-500/20"
-              }`}
-              disabled={!speechSupported}
-            >
-              {isListening ? (
-                <MicOff className="w-6 h-6 text-slate-950" />
-              ) : (
-                <Mic className="w-6 h-6 text-slate-950" />
-              )}
-            </button>
-
-            {/* Speaking Synthesis Indicator */}
-            {isSpeaking && (
-              <button
-                onClick={stopSpeaking}
-                className="h-10 w-10 bg-amber-500/20 border border-amber-500/40 rounded-full text-amber-400 flex items-center justify-center cursor-pointer"
-                title="Stop Speaking"
-              >
-                <VolumeX className="w-5 h-5 animate-bounce" />
-              </button>
-            )}
-          </div>
-
-          <div className="text-center space-y-1 max-w-xs">
-            {/* Dynamic visual state guidelines */}
-            <p className="text-xs font-semibold text-slate-100">
-              {isListening 
-                ? "🎙️ Transcribing: Say your question aloud..." 
-                : isSpeaking 
-                  ? "🔊 Readout: Prof. is narrating answer" 
-                  : "Tap Micro to ask a voice question"}
-            </p>
-            <p className="text-[10px] text-slate-400 font-sans leading-relaxed">
-              {!speechSupported 
-                ? "Note: Web Speech API is blocked/inactive in this browser iframe. Use Text Mode or grant microphone settings." 
-                : "Captures microphone audio. Say keywords like 'Delta check' or 'Hemolysis'."}
-            </p>
-          </div>
-        </div>
-      )}
-
-      {/* Inputs Form */}
-      <div className="p-3 bg-slate-950 border-t border-slate-800">
+      {/* Input */}
+      <div className="border-t border-line p-3 sm:p-4">
         {speechMode === "text" ? (
-          <form onSubmit={handleFormSubmit} className="flex gap-2 relative">
-            <input
-              type="text"
-              value={inputText}
-              onChange={(e) => setInputText(e.target.value)}
-              placeholder="Query clinical ranges, error flags, or laboratory science..."
-              className="flex-grow bg-slate-900 border border-slate-800 rounded-xl px-4 py-3 text-sm text-slate-200 placeholder-slate-500 outline-none focus:border-teal-500/60 font-sans"
-              disabled={isGeneratingMessage}
-            />
-
-            {/* Speech quick listener trigger in text mode too */}
-            {speechSupported && (
-              <button
-                type="button"
-                onClick={handleToggleListen}
-                className={`absolute right-14 top-1/2 -translate-y-1/2 p-1.5 rounded-lg border transition-colors cursor-pointer ${
-                  isListening 
-                    ? "bg-rose-500/20 border-rose-500/30 text-rose-400" 
-                    : "border-slate-850 hover:bg-slate-800 text-slate-400 hover:text-teal-400"
-                }`}
-                title="Dictate message"
-              >
-                <Mic className="w-4 h-4" />
-              </button>
-            )}
-
-            <button
-              type="submit"
-              className={`px-3.5 rounded-xl flex items-center justify-center transition-colors cursor-pointer ${
-                inputText.trim() && !isGeneratingMessage
-                  ? "bg-teal-500 hover:bg-teal-400 text-slate-950"
-                  : "bg-slate-850 text-slate-500 cursor-not-allowed border border-slate-800/60"
-              }`}
-              disabled={!inputText.trim() || isGeneratingMessage}
-            >
-              <Send className="w-4 h-4" />
+          <form onSubmit={handleFormSubmit} className="flex items-center gap-2">
+            <label htmlFor="chat-input" className="sr-only">Message the professor</label>
+            <div className="relative flex-1">
+              <input
+                id="chat-input"
+                type="text"
+                value={inputText}
+                onChange={e => setInputText(e.target.value)}
+                placeholder="Ask about a result, a test, or a concept…"
+                className="w-full rounded-xl border border-line bg-surface-2 pl-4 pr-12 py-3 text-[15px] text-ink placeholder:text-ink-3 outline-none focus:border-accent"
+                disabled={isGeneratingMessage}
+              />
+              {speechSupported && (
+                <button
+                  type="button"
+                  onClick={handleToggleListen}
+                  aria-label={isListening ? "Stop dictation" : "Dictate"}
+                  className={`absolute right-2 top-1/2 -translate-y-1/2 p-2 rounded-lg cursor-pointer ${isListening ? "bg-critical/15 text-critical" : "text-ink-3 hover:text-accent"}`}
+                >
+                  <Mic className="w-4 h-4" />
+                </button>
+              )}
+            </div>
+            <button type="submit" disabled={!inputText.trim() || isGeneratingMessage} className="btn-primary h-12 w-12 p-0" aria-label="Send">
+              <Send className="w-[18px] h-[18px]" />
             </button>
           </form>
         ) : (
-          <div className="flex justify-between items-center px-2 py-0.5">
-            <span className="text-[10px] font-mono text-slate-400">Speech mode active</span>
+          <div className="flex flex-col items-center gap-3 py-2">
             <button
-              onClick={() => {
-                setMuteTts(!muteTts);
-                if (!muteTts) stopSpeaking();
-              }}
-              className="text-xs hover:text-slate-250 text-slate-400 flex items-center gap-1 bg-slate-900 border border-slate-800 px-2.5 py-1 rounded-md cursor-pointer"
+              onClick={handleToggleListen}
+              disabled={!speechSupported}
+              aria-label={isListening ? "Stop listening" : "Start speaking"}
+              className={`h-16 w-16 rounded-full flex items-center justify-center transition-colors cursor-pointer disabled:cursor-not-allowed disabled:opacity-40 ${isListening ? "bg-critical text-accent-ink" : "bg-accent text-accent-ink hover:bg-accent/90"}`}
             >
-              {muteTts ? (
-                <>
-                  <VolumeX className="w-3.5 h-3.5" /> Prof Muted
-                </>
-              ) : (
-                <>
-                  <Volume2 className="w-3.5 h-3.5 text-emerald-400 animate-pulse" /> Prof Voice On
-                </>
-              )}
+              {isListening ? <MicOff className="w-7 h-7" /> : <Mic className="w-7 h-7" />}
             </button>
+            <p className="text-sm text-ink-2 text-center">
+              {!speechSupported ? "Voice input isn't supported in this browser — switch to Type." : isListening ? "Listening… ask your question." : isSpeaking ? "The professor is speaking." : "Tap the mic and ask your question."}
+            </p>
+            <div className="flex gap-2">
+              {isSpeaking && (
+                <button onClick={stopSpeaking} className="btn-secondary px-3 py-2 text-xs"><VolumeX className="w-4 h-4" /> Stop</button>
+              )}
+              <button onClick={() => { setMuteTts(!muteTts); if (!muteTts) stopSpeaking(); }} className="btn-secondary px-3 py-2 text-xs">
+                {muteTts ? <><VolumeX className="w-4 h-4" /> Voice replies off</> : <><Volume2 className="w-4 h-4 text-accent" /> Voice replies on</>}
+              </button>
+            </div>
           </div>
         )}
       </div>
