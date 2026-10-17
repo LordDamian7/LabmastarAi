@@ -6,7 +6,7 @@ import dotenv from "dotenv";
 import type { PDFParse } from "pdf-parse";
 // @ts-ignore
 import mammoth from "mammoth";
-import { QUESTION_BANK } from "./_questionBank";
+import { QUESTION_BANK } from "./_questionBank.js";
 
 dotenv.config();
 
