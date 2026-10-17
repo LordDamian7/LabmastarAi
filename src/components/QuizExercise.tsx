@@ -21,14 +21,18 @@ import {
   ChevronDown
 } from "lucide-react";
 import { motion, AnimatePresence } from "motion/react";
+import BadgeMedal from "./BadgeMedal";
+import { EXAM_TOPICS, findTopic, topicBadgeId, TOPIC_ICONS, TOPIC_BADGE_SCORE, TOPIC_BADGE_MIN_QUESTIONS } from "../lib/badges";
 
 interface QuizExerciseProps {
-  /** amount, discipline, score %, number of questions answered */
-  onAwardXp: (amount: number, categoryKey?: string, achievedScore?: number, questionCount?: number) => void;
+  /** amount, discipline, score %, number of questions answered, topic id for topic exams */
+  onAwardXp: (amount: number, categoryKey?: string, achievedScore?: number, questionCount?: number, topicId?: string) => void;
   onIncrementGoal: (actionType: string) => void;
   studyMaterials: StudyMaterial[];
-  /** Discipline the dashboard asked to open immediately. */
+  /** Discipline (or topic id) the dashboard asked to open immediately. */
   pendingCategory?: string | null;
+  unlockedBadges: string[];
+  topicScores: Record<string, number>;
   onPendingCategoryHandled?: () => void;
 }
 
@@ -66,11 +70,13 @@ const formatClock = (s: number) => {
 
 export const examXp = (correct: number, score: number) => correct * 3 + (score >= 90 ? 25 : score >= 70 ? 10 : 0);
 
-export default function QuizExercise({ onAwardXp, onIncrementGoal, studyMaterials, pendingCategory, onPendingCategoryHandled }: QuizExerciseProps) {
+export default function QuizExercise({ onAwardXp, onIncrementGoal, studyMaterials, pendingCategory, onPendingCategoryHandled, unlockedBadges, topicScores }: QuizExerciseProps) {
   const [phase, setPhase] = useState<Phase>("setup");
   const [category, setCategory] = useState(CATEGORIES[0].id);
   const [length, setLength] = useState(DEFAULT_LENGTH);
   const [useRag, setUseRag] = useState(true);
+  const [examType, setExamType] = useState<"full" | "topic">("full");
+  const [topicId, setTopicId] = useState<string | null>(null);
 
   const [questions, setQuestions] = useState<ExamQuestion[]>([]);
   const [target, setTarget] = useState(DEFAULT_LENGTH);
@@ -93,10 +99,13 @@ export default function QuizExercise({ onAwardXp, onIncrementGoal, studyMaterial
   const runRef = useRef(0);
 
   const cat = CATEGORIES.find(c => c.id === category) || CATEGORIES[0];
+  const topic = findTopic(topicId)?.topic ?? null;
+  const examTitle = topic ? `${topic.name} topic` : cat.name;
 
-  const fetchBatch = async (cat: string, count: number, batch: number, avoid: string[]) => {
+  const fetchBatch = async (cat: string, topic: string | null, count: number, batch: number, avoid: string[]) => {
     const response = await apiFetch("/api/generate-questions", {
       category: cat,
+      topicId: topic,
       count,
       batch,
       avoid,
@@ -106,9 +115,10 @@ export default function QuizExercise({ onAwardXp, onIncrementGoal, studyMaterial
     return (await response.json()) as { questions: ExamQuestion[]; simulation?: boolean; exhausted?: boolean };
   };
 
-  const startExam = async (catId: string, total = length) => {
+  const startExam = async (catId: string, total = length, topicKey: string | null = null) => {
     const run = ++runRef.current;
     setCategory(catId);
+    setTopicId(topicKey);
     setPhase("loading");
     setError(null);
     setNotice(null);
@@ -122,7 +132,7 @@ export default function QuizExercise({ onAwardXp, onIncrementGoal, studyMaterial
 
     let loaded: ExamQuestion[] = [];
     try {
-      const first = await fetchBatch(catId, Math.min(BATCH, total), 0, []);
+      const first = await fetchBatch(catId, topicKey, Math.min(BATCH, total), 0, []);
       if (run !== runRef.current) return;
       if (!first.questions.length) throw new Error("No questions are available right now. Please try again shortly.");
       loaded = first.questions;
@@ -133,7 +143,7 @@ export default function QuizExercise({ onAwardXp, onIncrementGoal, studyMaterial
       setPhase("exam");
       if (first.questions.length < Math.min(BATCH, total) || first.exhausted) {
         setTarget(loaded.length);
-        if (first.simulation) setNotice(`Demo mode has ${loaded.length} questions for this discipline. Add a Gemini key for full ${total}-question exams.`);
+        if (first.simulation) setNotice(`Demo mode has ${loaded.length} question${loaded.length === 1 ? "" : "s"} for this ${topicKey ? "topic" : "discipline"}. Add a Gemini key for full ${total}-question exams.`);
         return;
       }
     } catch (err: any) {
@@ -148,7 +158,7 @@ export default function QuizExercise({ onAwardXp, onIncrementGoal, studyMaterial
     try {
       for (let batch = 1; loaded.length < total; batch++) {
         const want = Math.min(BATCH, total - loaded.length);
-        const result = await fetchBatch(catId, want, batch, loaded.map(q => q.stem.slice(0, 90)));
+        const result = await fetchBatch(catId, topicKey, want, batch, loaded.map(q => q.stem.slice(0, 90)));
         if (run !== runRef.current) return;
         if (result.simulation) setIsDemo(true);
         if (!result.questions.length) {
@@ -176,7 +186,9 @@ export default function QuizExercise({ onAwardXp, onIncrementGoal, studyMaterial
   // Open the discipline the dashboard asked for.
   useEffect(() => {
     if (pendingCategory) {
-      startExam(pendingCategory);
+      const pendingTopic = findTopic(pendingCategory);
+      if (pendingTopic) startExam(pendingTopic.category, length, pendingCategory);
+      else startExam(pendingCategory);
       onPendingCategoryHandled?.();
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -211,8 +223,8 @@ export default function QuizExercise({ onAwardXp, onIncrementGoal, studyMaterial
     setLoadingMore(false);
     const score = Math.round((correctCount / answeredCount) * 100);
     const xp = examXp(correctCount, score);
-    const badgeEligible = answeredCount >= BADGE_MIN_QUESTIONS;
-    onAwardXp(xp, category, score, answeredCount);
+    const badgeEligible = answeredCount >= (topicId ? TOPIC_BADGE_MIN_QUESTIONS : BADGE_MIN_QUESTIONS);
+    onAwardXp(xp, category, score, answeredCount, topicId ?? undefined);
     onIncrementGoal("exercise_complete");
     if (score >= 90) onIncrementGoal("score_90");
     setAwarded({ xp, badgeEligible });
@@ -279,7 +291,7 @@ export default function QuizExercise({ onAwardXp, onIncrementGoal, studyMaterial
         <div className="card p-4 sm:p-5 flex flex-col sm:flex-row sm:items-center gap-4">
           <div className="flex-1">
             <p className="text-sm font-bold">Exam length</p>
-            <p className="text-sm text-ink-3">Badges need {BADGE_MIN_QUESTIONS}+ questions.</p>
+            <p className="text-sm text-ink-3">Discipline medals need {BADGE_MIN_QUESTIONS}+ questions, topic badges {TOPIC_BADGE_MIN_QUESTIONS}+.</p>
           </div>
           <div className="grid grid-cols-3 rounded-xl border border-line bg-surface-2 p-1" role="radiogroup" aria-label="Exam length">
             {LENGTHS.map(n => (
@@ -296,6 +308,28 @@ export default function QuizExercise({ onAwardXp, onIncrementGoal, studyMaterial
           </div>
         </div>
 
+        <div className="card p-4 sm:p-5 flex flex-col sm:flex-row sm:items-center gap-4">
+          <div className="flex-1">
+            <p className="text-sm font-bold">Exam type</p>
+            <p className="text-sm text-ink-3">
+              {examType === "full" ? "Questions from every topic in the discipline." : `One topic. Pass with ${TOPIC_BADGE_SCORE}%+ on ${TOPIC_BADGE_MIN_QUESTIONS}+ questions to earn its badge.`}
+            </p>
+          </div>
+          <div className="grid grid-cols-2 rounded-xl border border-line bg-surface-2 p-1" role="radiogroup" aria-label="Exam type">
+            {([["full", "Full discipline"], ["topic", "Single topic"]] as const).map(([id, label]) => (
+              <button
+                key={id}
+                role="radio"
+                aria-checked={examType === id}
+                onClick={() => setExamType(id)}
+                className={`rounded-lg px-4 py-2 text-sm font-bold cursor-pointer whitespace-nowrap ${examType === id ? "bg-accent text-accent-ink" : "text-ink-2 hover:text-ink"}`}
+              >
+                {label}
+              </button>
+            ))}
+          </div>
+        </div>
+
         {studyMaterials.length > 0 && (
           <label className="card flex items-center gap-4 p-4 cursor-pointer">
             <span className="h-10 w-10 shrink-0 rounded-xl bg-accent/14 flex items-center justify-center"><BookOpen className="w-5 h-5 text-accent" /></span>
@@ -307,6 +341,42 @@ export default function QuizExercise({ onAwardXp, onIncrementGoal, studyMaterial
           </label>
         )}
 
+        {examType === "topic" ? (
+          <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+            {CATEGORIES.map(c => (
+              <section key={c.id} className="card p-4 sm:p-5 space-y-3">
+                <div className="flex items-center gap-3">
+                  <span className={`h-9 w-9 shrink-0 rounded-xl flex items-center justify-center ${c.tint}`}><c.icon className="w-[18px] h-[18px]" /></span>
+                  <h2 className="flex-1 text-base font-bold">{c.name}</h2>
+                  <span className="text-xs font-semibold text-ink-3">
+                    {EXAM_TOPICS[c.id].filter(t => unlockedBadges.includes(topicBadgeId(t.id))).length}/{EXAM_TOPICS[c.id].length} badges
+                  </span>
+                </div>
+                <ul className="divide-y divide-line">
+                  {EXAM_TOPICS[c.id].map(t => {
+                    const earned = unlockedBadges.includes(topicBadgeId(t.id));
+                    const best = topicScores[t.id];
+                    return (
+                      <li key={t.id}>
+                        <button onClick={() => startExam(c.id, length, t.id)} className="w-full flex items-center gap-3 py-2.5 text-left cursor-pointer group">
+                          <BadgeMedal category={c.id} earned={earned} shape="coin" icon={TOPIC_ICONS[t.id]} size={36} />
+                          <span className="flex-1 min-w-0">
+                            <span className="block text-sm font-semibold group-hover:text-accent transition-colors">{t.name}</span>
+                            <span className="block text-xs text-ink-3">
+                              {earned ? `${t.badge} · earned` : best !== undefined ? `${t.badge} · best ${best}%` : t.badge}
+                            </span>
+                          </span>
+                          <span className="hidden sm:inline text-xs font-bold text-accent">{length} Qs</span>
+                          <ArrowRight className="w-4 h-4 shrink-0 text-accent transition-transform group-hover:translate-x-1" />
+                        </button>
+                      </li>
+                    );
+                  })}
+                </ul>
+              </section>
+            ))}
+          </div>
+        ) : (
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
           {CATEGORIES.map(c => (
             <motion.button
@@ -328,6 +398,7 @@ export default function QuizExercise({ onAwardXp, onIncrementGoal, studyMaterial
             </motion.button>
           ))}
         </div>
+        )}
       </div>
     );
   }
@@ -338,7 +409,7 @@ export default function QuizExercise({ onAwardXp, onIncrementGoal, studyMaterial
       <div className="card p-10 sm:p-14 flex flex-col items-center text-center gap-5 min-h-[420px] justify-center" aria-live="polite">
         <span className={`h-14 w-14 rounded-2xl flex items-center justify-center ${cat.tint}`}><cat.icon className="w-7 h-7" /></span>
         <div className="space-y-1.5">
-          <h2 className="text-xl font-bold">Preparing your {cat.name} exam</h2>
+          <h2 className="text-xl font-bold">Preparing your {examTitle} exam</h2>
           <p className="text-sm text-ink-3">Writing the first questions — the rest load while you work.</p>
         </div>
         <Loader2 className="w-6 h-6 text-accent animate-spin" />
@@ -371,18 +442,18 @@ export default function QuizExercise({ onAwardXp, onIncrementGoal, studyMaterial
             </span>
           </div>
           <div className="flex-1 space-y-2">
-            <p className="eyebrow">{cat.name} exam</p>
+            <p className="eyebrow">{examTitle} exam</p>
             <h1 className="text-2xl sm:text-3xl font-extrabold tracking-tight">
               {score >= 85 ? "Board-ready performance" : score >= 60 ? "Solid — keep pushing" : "Good practice — review the misses"}
             </h1>
             <div className="flex flex-wrap gap-x-5 gap-y-1 text-sm text-ink-2">
               <span className="inline-flex items-center gap-1.5"><Clock className="w-4 h-4 text-ink-3" /> {formatClock(elapsed)}</span>
               <span className="font-bold text-xp">+{awarded?.xp ?? 0} XP</span>
-              {awarded && !awarded.badgeEligible && <span className="text-ink-3">Badges need {BADGE_MIN_QUESTIONS}+ answered questions</span>}
+              {awarded && !awarded.badgeEligible && <span className="text-ink-3">Badges need {topicId ? TOPIC_BADGE_MIN_QUESTIONS : BADGE_MIN_QUESTIONS}+ answered questions</span>}
             </div>
           </div>
           <div className="flex sm:flex-col gap-2.5">
-            <button onClick={() => startExam(category, length)} className="btn-primary flex-1"><RotateCcw className="w-4 h-4" /> New exam</button>
+            <button onClick={() => startExam(category, length, topicId)} className="btn-primary flex-1"><RotateCcw className="w-4 h-4" /> New exam</button>
             <button onClick={() => setPhase("setup")} className="btn-secondary flex-1">Change discipline</button>
           </div>
         </section>
@@ -485,7 +556,7 @@ export default function QuizExercise({ onAwardXp, onIncrementGoal, studyMaterial
       <div className="space-y-3">
         <div className="flex items-center gap-3">
           <button onClick={leaveExam} className="inline-flex items-center gap-1.5 text-sm font-semibold text-ink-2 hover:text-ink cursor-pointer" aria-label="Leave exam">
-            <ArrowLeft className="w-[18px] h-[18px]" /> <span className="hidden sm:inline">{cat.name}</span>
+            <ArrowLeft className="w-[18px] h-[18px]" /> <span className="hidden sm:inline">{topic ? topic.name : cat.name}</span>
           </button>
           <span className="flex-1 text-sm font-bold sm:text-center">Question {current + 1} of {total}</span>
           <button onClick={() => setShowMap(s => !s)} className="lg:hidden p-2 rounded-lg border border-line bg-surface text-ink-2 cursor-pointer" aria-label="Question map" aria-expanded={showMap}>

@@ -6,6 +6,7 @@ import { apiFetch, apiError } from "./lib/api";
 import StatsDashboard from "./components/StatsDashboard";
 import QuizExercise, { BADGE_MIN_QUESTIONS } from "./components/QuizExercise";
 import BadgeMedal from "./components/BadgeMedal";
+import { ALL_BADGES, TOPIC_ICONS, findTopic, topicBadgeId, TOPIC_BADGE_SCORE, TOPIC_BADGE_MIN_QUESTIONS } from "./lib/badges";
 import MLSProfessorChat from "./components/MLSProfessorChat";
 import RAGStudyLibrary from "./components/RAGStudyLibrary";
 import LoginPage from "./components/LoginPage";
@@ -21,53 +22,6 @@ import {
 } from "lucide-react";
 import { motion, AnimatePresence } from "motion/react";
 
-const INITIAL_BADGES: Badge[] = [
-  {
-    id: "chem_badge",
-    name: "Enzyme Detective",
-    description: "Mastered clinical chemistry: enzymes, electrolytes, acid–base and endocrine interpretation.",
-    unlockedAt: null,
-    iconName: "test-tube",
-    requirement: "Score 85%+ on a 25+ question Clinical Chemistry exam",
-    category: "chemistry"
-  },
-  {
-    id: "hem_badge",
-    name: "WBC Smear Specialist",
-    description: "Mastered hematology: cell morphology, anemias, leukemias and hemostasis.",
-    unlockedAt: null,
-    iconName: "droplet",
-    requirement: "Score 85%+ on a 25+ question Hematology exam",
-    category: "hematology"
-  },
-  {
-    id: "micro_badge",
-    name: "Microbial Profiler",
-    description: "Mastered microbiology: organism identification, media, biochemicals and susceptibility.",
-    unlockedAt: null,
-    iconName: "virus",
-    requirement: "Score 85%+ on a 25+ question Microbiology exam",
-    category: "microbiology"
-  },
-  {
-    id: "bb_badge",
-    name: "Immunohematology Officer",
-    description: "Mastered blood bank: ABO/Rh discrepancies, antibody ID, crossmatch and transfusion reactions.",
-    unlockedAt: null,
-    iconName: "shield",
-    requirement: "Score 85%+ on a 25+ question Blood Bank exam",
-    category: "bloodbank"
-  },
-  {
-    id: "imm_badge",
-    name: "Autoantibody Diagnostician",
-    description: "Mastered immunology: autoantibodies, serology, complement and immunodeficiency.",
-    unlockedAt: null,
-    iconName: "dna",
-    requirement: "Score 85%+ on a 25+ question Immunology exam",
-    category: "immunology"
-  }
-];
 
 type Tab = "dashboard" | "simulator" | "professor" | "library";
 
@@ -283,7 +237,7 @@ export default function App() {
     if (previous) {
       if (progress.level > previous.level) setLevelUpModal(progress.level);
       const newBadgeId = progress.unlockedBadges.find(id => !previous.unlockedBadges.includes(id));
-      const newBadge = newBadgeId && INITIAL_BADGES.find(b => b.id === newBadgeId);
+      const newBadge = newBadgeId && ALL_BADGES.find(b => b.id === newBadgeId);
       if (newBadge) setNewBadgeModal(newBadge);
     }
 
@@ -418,8 +372,20 @@ export default function App() {
     }));
   };
 
-  const handleAwardXpOnExerciseScore = (amount: number, categoryKey: string = "chemistry", score: number = 0, questionCount: number = 0) => {
+  const handleAwardXpOnExerciseScore = (amount: number, categoryKey: string = "chemistry", score: number = 0, questionCount: number = 0, topicId?: string) => {
     updateProgress(p => {
+      // Topic exams track their own best score and badge; they don't move the discipline score.
+      if (topicId && findTopic(topicId)) {
+        const topicScores = { ...(p.topicScores || {}) };
+        topicScores[topicId] = Math.max(topicScores[topicId] || 0, score);
+        const updated: UserProgress = { ...p, completedExercisesCount: p.completedExercisesCount + 1, topicScores };
+        const badgeId = topicBadgeId(topicId);
+        if (score >= TOPIC_BADGE_SCORE && questionCount >= TOPIC_BADGE_MIN_QUESTIONS && !p.unlockedBadges.includes(badgeId)) {
+          updated.unlockedBadges = [...p.unlockedBadges, badgeId];
+        }
+        return applyXp(updated, amount);
+      }
+
       const scoreKey = `${categoryKey}Score` as keyof UserProgress;
       const originalScore = (p[scoreKey] as number | undefined) || 0;
       const updated: UserProgress = {
@@ -557,7 +523,7 @@ export default function App() {
                   progress={progress}
                   userName={currentUser.name}
                   onClaimGoal={handleClaimGoalReward}
-                  allBadges={INITIAL_BADGES}
+                  allBadges={ALL_BADGES}
                   onStartCase={startCase}
                   onNavigate={setActiveTab}
                 />
@@ -569,6 +535,8 @@ export default function App() {
                   onIncrementGoal={handleIncrementGoalValue}
                   studyMaterials={studyMaterials}
                   pendingCategory={pendingCategory}
+                  unlockedBadges={progress.unlockedBadges}
+                  topicScores={progress.topicScores || {}}
                   onPendingCategoryHandled={() => setPendingCategory(null)}
                 />
               )}
@@ -649,7 +617,15 @@ export default function App() {
           >
             <motion.div initial={{ scale: 0.92, y: 12 }} animate={{ scale: 1, y: 0 }} className="card max-w-sm w-full p-8 text-center space-y-5 border-xp/40">
               <div className="mx-auto w-fit">
-                <BadgeMedal category={newBadgeModal.category} earned size={128} celebrate />
+                <BadgeMedal
+                  category={newBadgeModal.category}
+                  earned
+                  size={128}
+                  celebrate
+                  shape={newBadgeModal.topicId ? "coin" : "medal"}
+                  icon={newBadgeModal.topicId ? TOPIC_ICONS[newBadgeModal.topicId] : undefined}
+                  spinKey={0}
+                />
               </div>
               <div className="space-y-1">
                 <p className="eyebrow text-xp flex items-center justify-center gap-1.5"><Sparkles className="w-3.5 h-3.5" /> Badge earned</p>

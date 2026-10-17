@@ -40,6 +40,8 @@ export interface Badge {
   iconName: string;
   requirement: string;
   category: string;
+  /** Set on topic badges. */
+  topicId?: string;
 }
 
 export interface UserProgress {
@@ -54,6 +56,8 @@ export interface UserProgress {
   bloodbankScore: number;
   immunologyScore: number;
   unlockedBadges: string[];
+  /** Best score per exam topic id. */
+  topicScores?: Record<string, number>;
   completedExercisesCount: number;
   dailyGoals: DailyGoal[];
 }

@@ -7,6 +7,7 @@ import type { PDFParse } from "pdf-parse";
 // @ts-ignore
 import mammoth from "mammoth";
 import { QUESTION_BANK } from "./_questionBank.js";
+import { EXAM_TOPICS, findTopic } from "./_topics.js";
 
 dotenv.config();
 
@@ -473,13 +474,6 @@ Welcome to your Clinical Lab Science workstation! I am ready to guide you or tea
 // batches one after another, passing earlier stems in `avoid` so questions don't repeat,
 // and grading happens in the browser against the returned answer keys.
 const MAX_BATCH = 10;
-const EXAM_TOPICS: Record<string, string[]> = {
-  chemistry: ["electrolytes and acid–base balance", "enzymes and liver function", "carbohydrates, lipids and cardiac markers", "renal function, proteins and endocrinology", "quality control, interferences and pre-analytical errors"],
-  hematology: ["red cell disorders and anemias", "white cell disorders and leukemias", "hemostasis and coagulation testing", "blood smear morphology and instrumentation", "body fluids and urinalysis"],
-  microbiology: ["gram-positive organisms", "gram-negative organisms", "anaerobes, mycobacteria and specimen handling", "mycology and parasitology", "antimicrobial susceptibility and virology"],
-  bloodbank: ["ABO and Rh typing and discrepancies", "antibody screening and identification", "compatibility testing and transfusion reactions", "HDFN and prenatal testing", "blood components, storage and donor screening"],
-  immunology: ["autoantibodies and ANA patterns", "infectious disease serology (hepatitis, syphilis, HIV)", "immunoassay principles (ELISA, agglutination, precipitation)", "complement, immunoglobulins and hypersensitivity", "transplant and tumor immunology"],
-};
 
 interface ExamQuestion {
   topic: string;
@@ -509,11 +503,14 @@ const stemKey = (stem: string) => stem.toLowerCase().replace(/[^a-z0-9]/g, "").s
 app.post("/api/generate-questions", requireUser, aiQuota("generate-questions"), async (req: AuthedRequest, res) => {
   try {
     const { category, materialIds } = req.body;
-    const activeCategory = EXAM_TOPICS[category] ? category : "chemistry";
+    // A topic exam pins every batch to one topic; otherwise batches rotate through the discipline's topics.
+    const pinned = findTopic(typeof req.body.topicId === "string" ? req.body.topicId : null);
+    const activeCategory = pinned?.category ?? (EXAM_TOPICS[category] ? category : "chemistry");
     const count = Math.min(MAX_BATCH, Math.max(1, Number(req.body.count) || MAX_BATCH));
     const batch = Math.max(0, Number(req.body.batch) || 0);
     const avoid: string[] = Array.isArray(req.body.avoid) ? req.body.avoid.filter((x: unknown) => typeof x === "string").slice(-60) : [];
-    const topic = EXAM_TOPICS[activeCategory][batch % EXAM_TOPICS[activeCategory].length];
+    const topicDef = pinned?.topic ?? EXAM_TOPICS[activeCategory][batch % EXAM_TOPICS[activeCategory].length];
+    const topic = topicDef.focus;
 
     try {
       const client = getGeminiClient();
@@ -521,7 +518,7 @@ app.post("/api/generate-questions", requireUser, aiQuota("generate-questions"), 
       const ragContext = selectRagContext(textDocs, `${activeCategory} ${topic}`, 20000);
 
       const prompt = `You are writing practice questions for the ASCP Medical Laboratory Scientist (MLS) board exam.
-Discipline: ${activeCategory}. Focus this set on: ${topic}.
+Discipline: ${activeCategory}. ${pinned ? "Every question must be about" : "Focus this set on"}: ${topic}.
 Write exactly ${count} multiple-choice questions.
 
 Rules:
@@ -591,6 +588,7 @@ ${ragContext}` : ""}`;
       console.warn("Serving offline question bank. Reason:", apiError.message);
       const seen = new Set(avoid.map(stemKey));
       const pool = (QUESTION_BANK[activeCategory] || [])
+        .filter(q => !pinned || pinned.topic.bankTopics.includes(q.topic))
         .filter(q => !seen.has(stemKey(q.stem)))
         .sort(() => Math.random() - 0.5)
         .slice(0, count)

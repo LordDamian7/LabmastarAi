@@ -1,4 +1,4 @@
-import React from "react";
+import React, { useEffect, useState } from "react";
 import { UserProgress, Badge } from "../types";
 import {
   Flame,
@@ -18,8 +18,25 @@ import {
 import { motion } from "motion/react";
 import BadgeMedal from "./BadgeMedal";
 import { BADGE_MIN_QUESTIONS } from "./QuizExercise";
+import { TOPIC_ICONS, TOPIC_BADGE_SCORE, TOPIC_BADGE_MIN_QUESTIONS, findTopic } from "../lib/badges";
 
 const BADGE_SCORE = 85;
+/** Earned badges spin once on load, then again every this many ms. */
+const SPIN_INTERVAL_MS = 45_000;
+
+const topicName = (topicId: string) => findTopic(topicId)?.topic.name ?? "";
+
+/** Ticks every SPIN_INTERVAL_MS while the tab is visible. */
+function useSpinTick() {
+  const [tick, setTick] = useState(0);
+  useEffect(() => {
+    const t = setInterval(() => {
+      if (!document.hidden) setTick(n => n + 1);
+    }, SPIN_INTERVAL_MS);
+    return () => clearInterval(t);
+  }, []);
+  return tick;
+}
 
 interface StatsDashboardProps {
   progress: UserProgress;
@@ -68,7 +85,10 @@ export default function StatsDashboard({ progress, userName, onClaimGoal, allBad
   const focus = [...scored].sort((a, b) => a.score - b.score)[0];
 
   const goalsDone = progress.dailyGoals.filter(g => g.current >= g.target).length;
-  const nextBadge = allBadges.find(b => !progress.unlockedBadges.includes(b.id));
+  const medals = allBadges.filter(b => !b.topicId);
+  const topicBadges = allBadges.filter(b => b.topicId);
+  const nextBadge = medals.find(b => !progress.unlockedBadges.includes(b.id)) || topicBadges.find(b => !progress.unlockedBadges.includes(b.id));
+  const spinTick = useSpinTick();
   const firstName = userName.split(/\s+/)[0];
 
   return (
@@ -151,7 +171,7 @@ export default function StatsDashboard({ progress, userName, onClaimGoal, allBad
             {progress.unlockedBadges.length}<span className="text-ink-3 text-xl font-bold"> of {allBadges.length}</span>
           </p>
           <ProgressBar pct={(progress.unlockedBadges.length / allBadges.length) * 100} className="bg-xp" />
-          <p className="text-sm text-ink-3">{nextBadge ? `Next: ${nextBadge.name} — ${nextBadge.requirement.toLowerCase()}` : "All badges earned. Legendary."}</p>
+          <p className="text-sm text-ink-3">{nextBadge ? `Next: ${nextBadge.name} — ${nextBadge.requirement.charAt(0).toLowerCase()}${nextBadge.requirement.slice(1)}` : "All badges earned. Legendary."}</p>
         </div>
       </div>
 
@@ -214,12 +234,12 @@ export default function StatsDashboard({ progress, userName, onClaimGoal, allBad
         <div className="flex flex-wrap items-end justify-between gap-2">
           <div>
             <h3 className="text-lg font-bold">Discipline medals</h3>
-            <p className="text-sm text-ink-3 mt-0.5">Score {BADGE_SCORE}%+ on a {BADGE_MIN_QUESTIONS}+ question exam to earn each medal.</p>
+            <p className="text-sm text-ink-3 mt-0.5">Score {BADGE_SCORE}%+ on a {BADGE_MIN_QUESTIONS}+ question discipline exam to earn each medal.</p>
           </div>
-          <span className="text-sm font-semibold text-xp">{progress.unlockedBadges.length} / {allBadges.length} earned</span>
+          <span className="text-sm font-semibold text-xp">{medals.filter(b => progress.unlockedBadges.includes(b.id)).length} / {medals.length} earned</span>
         </div>
         <ul className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-3">
-          {allBadges.map(badge => {
+          {medals.map((badge, i) => {
             const earned = progress.unlockedBadges.includes(badge.id);
             const discipline = DISCIPLINES.find(d => d.id === badge.category);
             const best = discipline ? (progress[discipline.key] as number) || 0 : 0;
@@ -229,12 +249,12 @@ export default function StatsDashboard({ progress, userName, onClaimGoal, allBad
                   onClick={() => !earned && onStartCase(badge.category)}
                   disabled={earned}
                   title={earned ? badge.description : `${badge.requirement} — start an exam`}
-                  className={`group w-full h-full rounded-2xl border p-4 pt-5 flex flex-col items-center text-center gap-3 transition-colors ${
+                  className={`group w-full h-full rounded-2xl border p-4 pt-6 flex flex-col items-center text-center gap-3 transition-colors ${
                     earned ? "border-xp/40 bg-gradient-to-b from-xp/10 to-transparent cursor-default" : "border-line bg-surface-2 hover:border-accent/50"
                   }`}
                 >
-                  <BadgeMedal category={badge.category} earned={earned} progress={best / BADGE_SCORE} size={84} />
-                  <div className="space-y-1">
+                  <BadgeMedal category={badge.category} earned={earned} progress={best / BADGE_SCORE} size={84} spinKey={spinTick} spinDelay={i * 0.15} />
+                  <div className="space-y-1 mt-1">
                     <p className={`text-sm font-bold leading-tight ${earned ? "text-ink" : "text-ink-2"}`}>{badge.name}</p>
                     <p className="text-xs text-ink-3">{discipline?.name}</p>
                   </div>
@@ -256,6 +276,64 @@ export default function StatsDashboard({ progress, userName, onClaimGoal, allBad
             );
           })}
         </ul>
+      </section>
+
+      {/* Topic badges */}
+      <section className="card p-5 sm:p-6 space-y-5">
+        <div className="flex flex-wrap items-end justify-between gap-2">
+          <div>
+            <h3 className="text-lg font-bold">Topic badges</h3>
+            <p className="text-sm text-ink-3 mt-0.5">Pass a single-topic exam ({TOPIC_BADGE_SCORE}%+ on {TOPIC_BADGE_MIN_QUESTIONS}+ questions) to earn its badge.</p>
+          </div>
+          <span className="text-sm font-semibold text-xp">{topicBadges.filter(b => progress.unlockedBadges.includes(b.id)).length} / {topicBadges.length} earned</span>
+        </div>
+        <div className="space-y-5">
+          {DISCIPLINES.map((d, di) => {
+            const badges = topicBadges.filter(b => b.category === d.id);
+            return (
+              <div key={d.id} className="space-y-2.5">
+                <div className="flex items-center gap-2">
+                  <d.icon className="w-4 h-4 text-ink-3" />
+                  <h4 className="text-sm font-bold text-ink-2">{d.name}</h4>
+                  <span className="text-xs text-ink-3">· {badges.filter(b => progress.unlockedBadges.includes(b.id)).length}/{badges.length}</span>
+                </div>
+                <ul className="grid grid-cols-3 sm:grid-cols-5 gap-2.5">
+                  {badges.map((badge, i) => {
+                    const earned = progress.unlockedBadges.includes(badge.id);
+                    const best = progress.topicScores?.[badge.topicId!];
+                    return (
+                      <li key={badge.id}>
+                        <button
+                          onClick={() => !earned && onStartCase(badge.topicId!)}
+                          disabled={earned}
+                          title={earned ? `${badge.name} — ${badge.description}` : `${badge.requirement} — start this topic exam`}
+                          className={`group w-full h-full rounded-xl border px-2 pt-4 pb-3 flex flex-col items-center text-center gap-2 transition-colors ${
+                            earned ? "border-xp/35 bg-gradient-to-b from-xp/8 to-transparent cursor-default" : "border-line bg-surface-2 hover:border-accent/50"
+                          }`}
+                        >
+                          <BadgeMedal
+                            category={badge.category}
+                            earned={earned}
+                            shape="coin"
+                            icon={TOPIC_ICONS[badge.topicId!]}
+                            progress={(best || 0) / TOPIC_BADGE_SCORE}
+                            size={60}
+                            spinKey={spinTick}
+                            spinDelay={0.8 + di * 0.25 + i * 0.08}
+                          />
+                          <span className={`mt-1 text-xs font-bold leading-tight ${earned ? "text-ink" : "text-ink-2"}`}>{badge.name}</span>
+                          <span className="text-[11px] leading-tight text-ink-3">
+                            {earned ? "Earned" : best !== undefined ? `Best ${best}%` : topicName(badge.topicId!)}
+                          </span>
+                        </button>
+                      </li>
+                    );
+                  })}
+                </ul>
+              </div>
+            );
+          })}
+        </div>
       </section>
     </div>
   );

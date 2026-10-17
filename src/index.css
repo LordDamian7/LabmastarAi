@@ -83,8 +83,57 @@
 .prose-lab a { @apply text-accent underline; }
 
 /* Badge medals */
-.medal-earned svg {
-  filter: drop-shadow(0 6px 18px color-mix(in srgb, var(--medal-glow) 35%, transparent));
+/* 3D badges: stacked CSS-3D layers (see BadgeMedal.tsx) */
+.b3d {
+  perspective: 700px;
+}
+.b3d-body {
+  position: absolute;
+  inset: 0;
+  transform-style: preserve-3d;
+  transform: rotateX(8deg) rotateY(-18deg);
+  transition: transform 0.6s cubic-bezier(0.2, 0.8, 0.2, 1);
+}
+.b3d:hover .b3d-body {
+  transform: rotateX(4deg) rotateY(16deg);
+}
+.b3d-layer,
+.b3d-face {
+  position: absolute;
+  inset: 0;
+}
+.b3d-face {
+  backface-visibility: hidden;
+}
+.b3d-earned .b3d-face > svg {
+  filter: drop-shadow(0 6px 14px color-mix(in srgb, var(--medal-glow) 30%, transparent));
+}
+.b3d-shadow {
+  position: absolute;
+  left: 18%;
+  right: 18%;
+  bottom: -6%;
+  height: 10%;
+  border-radius: 9999px;
+  background: radial-gradient(closest-side, rgb(0 0 0 / 0.45), transparent);
+}
+/* Earned-badge spin: lift, two full turns, settle with a small bounce. */
+.b3d-spin {
+  animation: b3d-spin 2.6s cubic-bezier(0.45, 0.05, 0.3, 1) var(--b3d-delay, 0s) backwards;
+}
+.b3d-shadow-spin {
+  animation: b3d-shadow 2.6s cubic-bezier(0.45, 0.05, 0.3, 1) var(--b3d-delay, 0s) backwards;
+}
+@keyframes b3d-spin {
+  0% { transform: rotateX(8deg) rotateY(-18deg) translateY(0) scale(1); }
+  16% { transform: rotateX(4deg) rotateY(-30deg) translateY(-12%) scale(1.08); }
+  74% { transform: rotateX(4deg) rotateY(708deg) translateY(-12%) scale(1.08); }
+  88% { transform: rotateX(10deg) rotateY(698deg) translateY(2%) scale(0.98); }
+  100% { transform: rotateX(8deg) rotateY(702deg) translateY(0) scale(1); }
+}
+@keyframes b3d-shadow {
+  0%, 100% { transform: scale(1); opacity: 1; }
+  16%, 74% { transform: scale(0.6); opacity: 0.5; }
 }
 .medal-shine {
   animation: medal-shine 3.6s ease-in-out infinite;
@@ -107,5 +156,6 @@
   100% { transform: scale(1.25); opacity: 0; }
 }
 @media (prefers-reduced-motion: reduce) {
-  .medal-shine, .medal-burst { animation: none; }
+  .medal-shine, .medal-burst, .b3d-spin, .b3d-shadow-spin { animation: none; }
+  .b3d-body { transition: none; }
 }
