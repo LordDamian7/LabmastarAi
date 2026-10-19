@@ -5,35 +5,14 @@ export interface LabResultItem {
   status: "Normal" | "High" | "Low" | "Critical High" | "Critical Low" | string;
 }
 
-export interface Question {
-  id: number;
-  text: string;
-  hint: string;
-  type: "multiple-choice" | "short-answer";
-  options?: string[];
-  correctAnswer: string;
-}
-
-export interface CaseStudy {
-  id: string;
-  title: string;
-  difficulty: "Beginner" | "Intermediate" | "Advanced";
-  scenario: string;
+/** One board-style multiple-choice question in a Lab Simulator exam. */
+export interface ExamQuestion {
+  topic: string;
+  stem: string;
   labData: LabResultItem[];
-  questions: Question[];
-}
-
-export interface QuestionFeedbackResult {
-  id: number;
-  correct: boolean;
-  feedback: string;
-}
-
-export interface GradingResult {
-  score: number;
-  summary: string;
-  questionFeedback: QuestionFeedbackResult[];
-  pearlOfWisdom: string;
+  options: string[];
+  answerIndex: number;
+  explanation: string;
 }
 
 export interface Message {
@@ -61,6 +40,8 @@ export interface Badge {
   iconName: string;
   requirement: string;
   category: string;
+  /** Set on topic badges. */
+  topicId?: string;
 }
 
 export interface UserProgress {
@@ -75,6 +56,8 @@ export interface UserProgress {
   bloodbankScore: number;
   immunologyScore: number;
   unlockedBadges: string[];
+  /** Best score per exam topic id. */
+  topicScores?: Record<string, number>;
   completedExercisesCount: number;
   dailyGoals: DailyGoal[];
 }
@@ -84,7 +67,7 @@ export interface StudyMaterial {
   fileName: string;
   fileType: "pdf" | "docx" | "txt" | "image" | string;
   fileSize: number;
-  fullContent: string; // Plaintext content for text files, or base64 without headers for images
+  storagePath: string; // Path of the original file in the Supabase "study-materials" bucket
   summary?: string;
   uploadedAt: string;
   pages?: number;

@@ -1,335 +1,340 @@
-import React, { useState } from "react";
-import { UserProgress, Badge, DailyGoal } from "../types";
-import { Award, Flame, CheckCircle, Lock, Trophy, Target, Sparkles, BookOpen, Battery, RefreshCw } from "lucide-react";
+import React, { useEffect, useState } from "react";
+import { UserProgress, Badge } from "../types";
+import {
+  Flame,
+  Zap,
+  Target,
+  Trophy,
+  Clock,
+  ArrowRight,
+  Check,
+  TestTube,
+  Droplet,
+  Microscope,
+  Syringe,
+  Dna,
+  Gift
+} from "lucide-react";
 import { motion } from "motion/react";
+import BadgeMedal from "./BadgeMedal";
+import { BADGE_MIN_QUESTIONS } from "./QuizExercise";
+import { TOPIC_ICONS, TOPIC_BADGE_SCORE, TOPIC_BADGE_MIN_QUESTIONS, findTopic } from "../lib/badges";
+
+const BADGE_SCORE = 85;
+/** Earned badges spin once on load, then again every this many ms. */
+const SPIN_INTERVAL_MS = 45_000;
+
+const topicName = (topicId: string) => findTopic(topicId)?.topic.name ?? "";
+
+/** Ticks every SPIN_INTERVAL_MS while the tab is visible. */
+function useSpinTick() {
+  const [tick, setTick] = useState(0);
+  useEffect(() => {
+    const t = setInterval(() => {
+      if (!document.hidden) setTick(n => n + 1);
+    }, SPIN_INTERVAL_MS);
+    return () => clearInterval(t);
+  }, []);
+  return tick;
+}
 
 interface StatsDashboardProps {
   progress: UserProgress;
+  userName: string;
   onClaimGoal: (goalId: string) => void;
   allBadges: Badge[];
+  onStartCase: (category: string) => void;
+  onNavigate: (tab: "dashboard" | "simulator" | "professor" | "library") => void;
 }
 
-export default function StatsDashboard({ progress, onClaimGoal, allBadges }: StatsDashboardProps) {
-  const [selectedBadge, setSelectedBadge] = useState<Badge | null>(null);
+const DISCIPLINES = [
+  { id: "chemistry", name: "Clinical Chemistry", key: "chemistryScore", bar: "bg-accent", icon: TestTube, blurb: "electrolytes, enzymes and delta checks" },
+  { id: "hematology", name: "Hematology", key: "hematologyScore", bar: "bg-critical", icon: Droplet, blurb: "CBC differentials, smears and coagulation" },
+  { id: "microbiology", name: "Microbiology", key: "microbiologyScore", bar: "bg-normal", icon: Microscope, blurb: "stains, cultures and biochemical ID" },
+  { id: "bloodbank", name: "Blood Bank", key: "bloodbankScore", bar: "bg-low", icon: Syringe, blurb: "ABO typing, antibody ID and crossmatching" },
+  { id: "immunology", name: "Immunology", key: "immunologyScore", bar: "bg-violet", icon: Dna, blurb: "ANA patterns, titers and ELISA" }
+] as const;
 
-  const xpPercentage = Math.min(100, Math.round((progress.xp / progress.xpNeededForNextLevel) * 100));
+const rankTitle = (level: number) =>
+  level >= 7 ? "Chief Resident" : level >= 5 ? "Senior Scientist" : level >= 3 ? "Lab Resident" : "Trainee Tech";
 
-  // Determine competency ratings
-  const getRating = (score: number) => {
-    if (score >= 90) return { title: "Chief Resident", color: "text-emerald-400 bg-emerald-500/10 border-emerald-500/30" };
-    if (score >= 70) return { title: "Lead Scientist", color: "text-amber-400 bg-amber-500/10 border-amber-500/30" };
-    if (score >= 40) return { title: "Lab Resident", color: "text-teal-400 bg-teal-500/10 border-teal-500/30" };
-    return { title: "Trainee Tech", color: "text-slate-400 bg-slate-500/10 border-slate-500/20" };
-  };
+const greeting = () => {
+  const h = new Date().getHours();
+  return h < 12 ? "Good morning" : h < 18 ? "Good afternoon" : "Good evening";
+};
 
-  const subjectMeters = [
-    { name: "Clinical Chemistry", score: progress.chemistryScore, icon: "🧪" },
-    { name: "Hematology & Coag", score: progress.hematologyScore, icon: "🩸" },
-    { name: "Medical Microbiology", score: progress.microbiologyScore, icon: "🧫" },
-    { name: "Blood Bank (Immunohematology)", score: progress.bloodbankScore, icon: "💉" },
-    { name: "Immunology & Serology", score: progress.immunologyScore, icon: "🧬" }
-  ];
-
+function ProgressBar({ pct, className }: { pct: number; className: string }) {
   return (
-    <div className="space-y-6">
-      {/* Level and Streak Summary Ribbon */}
-      <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-        {/* Level Unit */}
-        <div className="bg-slate-900 border border-teal-500/20 rounded-xl p-5 relative overflow-hidden backdrop-blur-md">
-          <div className="absolute top-0 right-0 w-32 h-32 bg-teal-500/5 rounded-full -mr-10 -mt-10 blur-xl" />
-          <div className="flex items-center gap-4">
-            <div className="h-14 w-14 rounded-xl bg-teal-950 border border-teal-400/30 text-teal-400 flex items-center justify-center font-mono text-2xl font-bold shadow-md shadow-teal-500/10">
-              Lvl {progress.level}
-            </div>
-            <div className="flex-1 min-w-0">
-              <h3 className="text-sm font-medium text-slate-400 uppercase tracking-wider">Academic Standing</h3>
-              <p className="font-sans font-bold text-lg text-slate-100 truncate">
-                {progress.level >= 5 ? "Senior Laboratory Specialist" : progress.level >= 3 ? "Clinical Technician" : "Laboratory Novice"}
-              </p>
-            </div>
-          </div>
-          <div className="mt-4 space-y-2">
-            <div className="flex justify-between text-xs font-mono text-slate-400">
-              <span>XP: {progress.xp} / {progress.xpNeededForNextLevel}</span>
-              <span>{xpPercentage}% calibrated</span>
-            </div>
-            <div className="h-2.5 w-full bg-slate-950 rounded-full overflow-hidden border border-slate-800">
-              <motion.div 
-                className="h-full bg-gradient-to-r from-teal-500 to-emerald-400 rounded-full" 
-                initial={{ width: 0 }}
-                animate={{ width: `${xpPercentage}%` }}
-                transition={{ duration: 0.8, ease: "easeOut" }}
-              />
-            </div>
-          </div>
-        </div>
-
-        {/* Clinical Streak Unit */}
-        <div className="bg-slate-900 border border-amber-500/20 rounded-xl p-5 relative overflow-hidden backdrop-blur-md">
-          <div className="absolute top-0 right-0 w-32 h-32 bg-amber-500/5 rounded-full -mr-10 -mt-10 blur-xl" />
-          <div className="flex items-center gap-4">
-            <div className="h-14 w-14 rounded-xl bg-amber-950 border border-amber-400/30 text-amber-400 flex items-center justify-center flex-shrink-0">
-              <Flame className="w-8 h-8 animate-pulse" />
-            </div>
-            <div className="flex-1">
-              <div className="flex items-center gap-1.5">
-                <span className="text-2xl font-bold text-slate-100">{progress.streakCount}</span>
-                <span className="text-sm font-semibold text-slate-400">Day Streak</span>
-              </div>
-              <p className="text-xs text-slate-400 mt-1">Keep training daily to prevent case files from expiring!</p>
-            </div>
-          </div>
-          <div className="mt-4 flex gap-1.5 justify-between">
-            {Array.from({ length: 7 }).map((_, i) => (
-              <div 
-                key={i} 
-                className={`h-5 flex-1 rounded border-t-2 text-[9px] flex items-center justify-center font-mono font-bold transition-all ${
-                  progress.streakCount > i 
-                    ? "bg-amber-950/40 border-amber-400 text-amber-400" 
-                    : "bg-slate-950/40 border-dashed border-slate-800 text-slate-600"
-                }`}
-              >
-                Day {i + 1}
-              </div>
-            ))}
-          </div>
-        </div>
-
-        {/* Calibration Stats Ribbon */}
-        <div className="bg-slate-900 border border-emerald-500/20 rounded-xl p-5 relative overflow-hidden backdrop-blur-md flex flex-col justify-between">
-          <div className="flex items-center justify-between">
-            <div className="space-y-1">
-              <h3 className="text-sm font-medium text-slate-400 uppercase tracking-wider">Diagnoses Solved</h3>
-              <p className="text-3xl font-mono font-bold text-emerald-400">{progress.unlockedBadges.length + progress.completedExercisesCount}</p>
-            </div>
-            <Trophy className="w-10 h-10 text-emerald-400/40" />
-          </div>
-          <p className="text-xs text-slate-400 mt-2">
-            Completed <span className="text-emerald-400 font-bold">{progress.completedExercisesCount}</span> interactive clinical labs and unlocked <span className="text-teal-400 font-bold">{progress.unlockedBadges.length}</span> critical competencies.
-          </p>
-        </div>
-      </div>
-
-      {/* Main Grid: Goals and Subject Proficiency */}
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-        
-        {/* Daily Goals Board */}
-        <div id="daily-goals-panel" className="bg-slate-900 border border-slate-800 rounded-xl p-6 space-y-4">
-          <div className="flex items-center justify-between border-b border-slate-800 pb-4">
-            <div className="flex items-center gap-2">
-              <Target className="w-5 h-5 text-teal-400" />
-              <h2 className="font-sans font-bold text-lg text-slate-100">Daily Laboratory Protocols</h2>
-            </div>
-            <span className="text-xs font-mono text-slate-400 bg-slate-950 px-2 py-1 rounded">Resets every 24h</span>
-          </div>
-
-          <div className="space-y-3">
-            {progress.dailyGoals.map((goal) => {
-              const fraction = `${goal.current}/${goal.target}`;
-              const pct = Math.min(100, Math.round((goal.current / goal.target) * 100));
-              const canClaim = goal.current >= goal.target && !goal.completed;
-
-              return (
-                <div 
-                  key={goal.id} 
-                  className={`p-4 rounded-xl border transition-all ${
-                    goal.completed 
-                      ? "bg-slate-950/60 border-emerald-500/20 opacity-75" 
-                      : goal.current >= goal.target 
-                        ? "bg-teal-950/20 border-teal-500/40" 
-                        : "bg-slate-950 border-slate-800/60"
-                  }`}
-                >
-                  <div className="flex items-start justify-between gap-4">
-                    <div className="flex items-center gap-3">
-                      <span className="text-2xl">{goal.icon}</span>
-                      <div>
-                        <h4 className="text-sm font-semibold text-slate-100">{goal.title}</h4>
-                        <span className="text-xs font-mono text-amber-400 flex items-center gap-1 mt-1">
-                          <Sparkles className="w-3 h-3" /> +{goal.rewardXp} XP Reward
-                        </span>
-                      </div>
-                    </div>
-                    
-                    {goal.completed ? (
-                      <span className="flex items-center gap-1.5 text-xs text-emerald-400 font-mono font-bold bg-emerald-500/10 px-2.5 py-1 rounded-full border border-emerald-500/20">
-                        <CheckCircle className="w-3.5 h-3.5" /> Checked
-                      </span>
-                    ) : canClaim ? (
-                      <motion.button 
-                        whileHover={{ scale: 1.05 }}
-                        whileTap={{ scale: 0.95 }}
-                        onClick={() => onClaimGoal(goal.id)}
-                        className="text-xs font-mono font-bold text-slate-950 bg-teal-400 hover:bg-teal-300 px-3 py-1.5 rounded-lg cursor-pointer shadow-lg shadow-teal-500/20 border border-teal-200"
-                      >
-                        CLAIM XP
-                      </motion.button>
-                    ) : (
-                      <span className="text-xs font-mono text-slate-400 bg-slate-900 px-2 py-1 rounded font-bold">
-                        {fraction}
-                      </span>
-                    )}
-                  </div>
-
-                  {!goal.completed && (
-                    <div className="mt-3 space-y-1">
-                      <div className="h-1.5 w-full bg-slate-900 rounded-full overflow-hidden border border-slate-800/40">
-                        <div 
-                          className="h-full bg-teal-500 rounded-full transition-all duration-500"
-                          style={{ width: `${pct}%` }}
-                        />
-                      </div>
-                    </div>
-                  )}
-                </div>
-              );
-            })}
-          </div>
-        </div>
-
-        {/* Competency Meter Dashboard */}
-        <div id="competencies-panel" className="bg-slate-900 border border-slate-800 rounded-xl p-6 space-y-4">
-          <div className="flex items-center justify-between border-b border-slate-800 pb-4">
-            <div className="flex items-center gap-2">
-              <BookOpen className="w-5 h-5 text-emerald-400" />
-              <h2 className="font-sans font-bold text-lg text-slate-100">Lab Specialization Scores</h2>
-            </div>
-            <span className="text-xs font-mono text-emerald-400 flex items-center gap-1.5">
-              <Battery className="w-4 h-4" /> Calibration Active
-            </span>
-          </div>
-
-          <div className="space-y-4 h-[310px] overflow-y-auto pr-1">
-            {subjectMeters.map((sub, i) => {
-              const rating = getRating(sub.score);
-              return (
-                <div key={i} className="space-y-1.5 bg-slate-950 p-3 rounded-lg border border-slate-800/40">
-                  <div className="flex justify-between items-center">
-                    <span className="text-sm font-semibold text-slate-300 flex items-center gap-1.5">
-                      <span>{sub.icon}</span> {sub.name}
-                    </span>
-                    <span className={`text-[10px] font-mono font-bold px-2 py-0.5 rounded-full border ${rating.color}`}>
-                      {rating.title} ({sub.score}%)
-                    </span>
-                  </div>
-                  
-                  <div className="relative pt-1 flex items-center justify-between gap-3">
-                    <div className="h-2 flex-grow bg-slate-900 rounded-full overflow-hidden border border-slate-800">
-                      <motion.div 
-                        className={`h-full rounded-full ${sub.score >= 90 ? "bg-gradient-to-r from-emerald-500 to-green-400" : sub.score >= 70 ? "bg-gradient-to-r from-amber-500 to-yellow-400" : "bg-gradient-to-r from-teal-500 to-cyan-400"}`}
-                        initial={{ width: 0 }}
-                        animate={{ width: `${sub.score}%` }}
-                        transition={{ duration: 0.6, delay: i * 0.1 }}
-                      />
-                    </div>
-                  </div>
-                </div>
-              );
-            })}
-          </div>
-        </div>
-      </div>
-
-      {/* Competency Badges Shelf */}
-      <div className="bg-slate-900 border border-slate-800 rounded-xl p-6">
-        <div className="flex items-center gap-2 mb-6 border-b border-slate-800 pb-4">
-          <Award className="w-5 h-5 text-amber-400" />
-          <h2 className="font-sans font-bold text-lg text-slate-100">Professional Credential Board</h2>
-        </div>
-
-        <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-5 gap-4">
-          {allBadges.map((badge) => {
-            const isUnlocked = progress.unlockedBadges.includes(badge.id);
-            return (
-              <motion.button
-                whileHover={{ scale: 1.05 }}
-                whileTap={{ scale: 0.98 }}
-                onClick={() => setSelectedBadge(badge)}
-                key={badge.id}
-                className={`flex flex-col items-center p-4 rounded-xl border text-center relative cursor-pointer outline-none transition-all ${
-                  isUnlocked 
-                    ? "bg-slate-950 border-amber-500/30 text-slate-100 hover:border-amber-400/50 hover:bg-slate-950/80" 
-                    : "bg-slate-950/40 border-slate-800/60 text-slate-500 opacity-60"
-                }`}
-              >
-                {/* Lock icon overlay */}
-                {!isUnlocked && (
-                  <div className="absolute top-2 right-2 text-slate-700 bg-slate-900/60 p-1 rounded-full border border-slate-800">
-                    <Lock className="w-3 h-3" />
-                  </div>
-                )}
-                
-                <div className={`h-12 w-12 rounded-full flex items-center justify-center text-2xl mb-2.5 shadow-inner ${
-                  isUnlocked 
-                    ? "bg-amber-950/50 border border-amber-400/20 text-amber-400 animate-pulse" 
-                    : "bg-slate-900 text-slate-700"
-                }`}>
-                  <span className={isUnlocked ? "" : "grayscale"}>
-                    {getUserBadgeEmoji(badge.iconName)}
-                  </span>
-                </div>
-
-                <h4 className="text-xs font-bold truncate w-full">{badge.name}</h4>
-                <p className="text-[10px] font-mono text-slate-400 mt-1 truncate w-full capitalize">{badge.category}</p>
-              </motion.button>
-            );
-          })}
-        </div>
-      </div>
-
-      {/* Badge Detail Modal Dialog */}
-      {selectedBadge && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/80 backdrop-blur-sm p-4 animate-fadeIn">
-          <div className="bg-slate-900 border border-teal-500/30 rounded-2xl max-w-sm w-full p-6 space-y-4 shadow-2xl relative">
-            <button 
-              onClick={() => setSelectedBadge(null)} 
-              className="absolute top-4 right-4 text-slate-400 hover:text-slate-100 text-xl font-bold cursor-pointer"
-            >
-              &times;
-            </button>
-            
-            <div className="text-center space-y-3">
-              <div className="inline-flex h-20 w-20 rounded-full bg-slate-950 border-2 border-amber-400/30 items-center justify-center text-4xl shadow-lg shadow-amber-500/10 mx-auto">
-                {getUserBadgeEmoji(selectedBadge.iconName)}
-              </div>
-              
-              <div>
-                <h3 className="text-lg font-bold text-slate-100">{selectedBadge.name}</h3>
-                <span className="text-xs font-mono text-amber-400 px-2 py-0.5 bg-slate-950 rounded border border-amber-500/20 capitalize inline-block mt-1">
-                  {selectedBadge.category} Qualification
-                </span>
-              </div>
-
-              <div className="bg-slate-950/80 p-4 rounded-xl border border-slate-800 text-sm text-slate-300">
-                <p className="text-slate-200 leading-relaxed font-sans">{selectedBadge.description}</p>
-                <div className="mt-3 pt-3 border-t border-slate-850 text-xs text-slate-400 flex flex-col gap-1.5 text-left font-mono">
-                  <span>🎯 Achievement Requirement: <span className="text-teal-400">{selectedBadge.requirement}</span></span>
-                  <span>🏆 Status: <span className={progress.unlockedBadges.includes(selectedBadge.id) ? "text-emerald-400 font-bold" : "text-slate-500"}>{progress.unlockedBadges.includes(selectedBadge.id) ? "Successfully Unlocked!" : "Locked (Incomplete)"}</span></span>
-                </div>
-              </div>
-
-              <button
-                onClick={() => setSelectedBadge(null)}
-                className="w-full bg-teal-500 hover:bg-teal-400 text-slate-950 font-bold font-mono py-2 rounded-lg cursor-pointer transition-colors"
-              >
-                Close Certificate
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
+    <div className="h-2 w-full rounded-full bg-surface-2 overflow-hidden" role="progressbar" aria-valuenow={Math.round(pct)} aria-valuemin={0} aria-valuemax={100}>
+      <motion.div
+        className={`h-full rounded-full ${className}`}
+        initial={{ width: 0 }}
+        animate={{ width: `${Math.max(2, Math.min(100, pct))}%` }}
+        transition={{ duration: 0.8, ease: [0.16, 1, 0.3, 1] }}
+      />
     </div>
   );
 }
 
-function getUserBadgeEmoji(iconName: string): string {
-  switch (iconName) {
-    case "test-tube": return "🧪";
-    case "droplet": return "🩸";
-    case "dna": return "🧬";
-    case "virus": return "🧫";
-    case "thermometer": return "🌡️";
-    case "shield": return "🛡️";
-    default: return "🏆";
-  }
+export default function StatsDashboard({ progress, userName, onClaimGoal, allBadges, onStartCase, onNavigate }: StatsDashboardProps) {
+  const xpToNext = progress.xpNeededForNextLevel - progress.xp;
+  const xpPct = (progress.xp / progress.xpNeededForNextLevel) * 100;
+
+  // Recommend the weakest discipline as today's exam.
+  const scored = DISCIPLINES.map(d => ({ ...d, score: (progress[d.key] as number) || 0 }));
+  const focus = [...scored].sort((a, b) => a.score - b.score)[0];
+
+  const goalsDone = progress.dailyGoals.filter(g => g.current >= g.target).length;
+  const medals = allBadges.filter(b => !b.topicId);
+  const topicBadges = allBadges.filter(b => b.topicId);
+  const nextBadge = medals.find(b => !progress.unlockedBadges.includes(b.id)) || topicBadges.find(b => !progress.unlockedBadges.includes(b.id));
+  const spinTick = useSpinTick();
+  const firstName = userName.split(/\s+/)[0];
+
+  return (
+    <div className="space-y-6 lg:space-y-7">
+      {/* Header */}
+      <div className="flex flex-col sm:flex-row sm:items-center gap-4">
+        <div className="flex-1 min-w-0">
+          <h1 className="text-2xl sm:text-[28px] font-extrabold tracking-tight">
+            {greeting()}, {firstName}
+          </h1>
+          <p className="text-[15px] text-ink-2 mt-1">
+            You're {xpToNext} XP away from Level {progress.level + 1}. One practice exam should do it.
+          </p>
+        </div>
+        <div className="inline-flex items-center gap-2 self-start sm:self-auto rounded-full border border-xp/35 bg-xp/12 px-3.5 py-2">
+          <Flame className="w-[18px] h-[18px] text-xp" />
+          <span className="text-sm font-bold text-xp">
+            {progress.streakCount}-day streak
+          </span>
+        </div>
+      </div>
+
+      {/* Today's exam */}
+      <section className="relative overflow-hidden rounded-2xl border border-accent/35 bg-surface p-6 sm:p-7">
+        <div className="pointer-events-none absolute inset-0 bg-gradient-to-r from-accent/15 via-transparent to-transparent" />
+        <div className="relative flex flex-col md:flex-row md:items-center gap-6">
+          <div className="flex-1 space-y-3">
+            <span className="inline-flex items-center gap-1.5 rounded-full bg-accent/15 px-2.5 py-1 text-xs font-bold tracking-[0.06em] text-accent">
+              <Zap className="w-3.5 h-3.5" /> TODAY'S FOCUS · {focus.name.toUpperCase()}
+            </span>
+            <h2 className="text-xl sm:text-[22px] font-bold tracking-tight">
+              Sharpen your {focus.name} skills — your lowest score at {focus.score}%
+            </h2>
+            <p className="text-[15px] text-ink-2 leading-relaxed max-w-2xl">
+              A board-style practice exam covering {focus.blurb}. Instant feedback on every question and a full score report at the end.
+            </p>
+            <div className="flex flex-wrap gap-x-5 gap-y-2 text-sm font-medium text-ink-3">
+              <span className="inline-flex items-center gap-1.5"><Clock className="w-4 h-4" /> ~45 min</span>
+              <span className="inline-flex items-center gap-1.5"><Target className="w-4 h-4" /> 50 questions</span>
+              <span className="inline-flex items-center gap-1.5"><Zap className="w-4 h-4" /> up to +175 XP</span>
+            </div>
+          </div>
+          <button onClick={() => onStartCase(focus.id)} className="btn-primary self-start md:self-center px-6 py-3.5 text-[15px]">
+            Start exam <ArrowRight className="w-[18px] h-[18px]" />
+          </button>
+        </div>
+      </section>
+
+      {/* Stats */}
+      <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 lg:gap-5">
+        <div className="card p-5 sm:p-6 space-y-3.5">
+          <div className="flex items-center gap-2.5">
+            <span className="h-9 w-9 rounded-xl bg-accent/14 flex items-center justify-center"><Zap className="w-[18px] h-[18px] text-accent" /></span>
+            <span className="text-sm font-semibold text-ink-2">Level {progress.level} · {rankTitle(progress.level)}</span>
+          </div>
+          <p className="text-3xl font-extrabold tracking-tight">
+            {progress.xp}<span className="text-ink-3 text-xl font-bold"> / {progress.xpNeededForNextLevel} XP</span>
+          </p>
+          <ProgressBar pct={xpPct} className="bg-accent" />
+          <p className="text-sm text-ink-3">{xpToNext} XP to Level {progress.level + 1}</p>
+        </div>
+
+        <div className="card p-5 sm:p-6 space-y-3.5">
+          <div className="flex items-center gap-2.5">
+            <span className="h-9 w-9 rounded-xl bg-violet/14 flex items-center justify-center"><Target className="w-[18px] h-[18px] text-violet" /></span>
+            <span className="text-sm font-semibold text-ink-2">Exams completed</span>
+          </div>
+          <p className="text-3xl font-extrabold tracking-tight">{progress.completedExercisesCount}</p>
+          <p className="text-sm text-ink-3">
+            {progress.completedExercisesCount === 0 ? "Finish your first exam to start your record." : "Every exam adds XP and sharpens your scores."}
+          </p>
+        </div>
+
+        <div className="card p-5 sm:p-6 space-y-3.5">
+          <div className="flex items-center gap-2.5">
+            <span className="h-9 w-9 rounded-xl bg-xp/14 flex items-center justify-center"><Trophy className="w-[18px] h-[18px] text-xp" /></span>
+            <span className="text-sm font-semibold text-ink-2">Badges earned</span>
+          </div>
+          <p className="text-3xl font-extrabold tracking-tight">
+            {progress.unlockedBadges.length}<span className="text-ink-3 text-xl font-bold"> of {allBadges.length}</span>
+          </p>
+          <ProgressBar pct={(progress.unlockedBadges.length / allBadges.length) * 100} className="bg-xp" />
+          <p className="text-sm text-ink-3">{nextBadge ? `Next: ${nextBadge.name} — ${nextBadge.requirement.charAt(0).toLowerCase()}${nextBadge.requirement.slice(1)}` : "All badges earned. Legendary."}</p>
+        </div>
+      </div>
+
+      {/* Goals + competency */}
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 lg:gap-5">
+        <section className="card p-5 sm:p-6 space-y-4">
+          <div className="flex items-center">
+            <h3 className="text-lg font-bold flex-1">Today's goals</h3>
+            <span className="text-sm font-semibold text-accent">{goalsDone} of {progress.dailyGoals.length} done</span>
+          </div>
+          <ul className="space-y-3">
+            {progress.dailyGoals.map(goal => {
+              const reached = goal.current >= goal.target;
+              const claimable = reached && !goal.completed;
+              return (
+                <li key={goal.id} className="flex items-center gap-3.5 rounded-xl bg-surface-2 p-3.5">
+                  <span className={`h-7 w-7 shrink-0 rounded-full flex items-center justify-center ${reached ? "bg-accent" : "border border-line"}`}>
+                    {reached && <Check className="w-4 h-4 text-accent-ink" strokeWidth={3} />}
+                  </span>
+                  <div className="flex-1 min-w-0">
+                    <p className={`text-[15px] font-semibold ${goal.completed ? "text-ink-2" : "text-ink"}`}>{goal.title}</p>
+                    <p className="text-xs font-bold text-xp mt-0.5">+{goal.rewardXp} XP</p>
+                  </div>
+                  {claimable ? (
+                    <button onClick={() => onClaimGoal(goal.id)} className="inline-flex items-center gap-1.5 rounded-lg bg-xp px-3 py-2 text-xs font-bold text-accent-ink hover:bg-xp/90 cursor-pointer">
+                      <Gift className="w-3.5 h-3.5" /> Claim
+                    </button>
+                  ) : (
+                    <span className="font-mono text-sm font-medium text-ink-3">{goal.current}/{goal.target}</span>
+                  )}
+                </li>
+              );
+            })}
+          </ul>
+        </section>
+
+        <section className="card p-5 sm:p-6 space-y-4">
+          <div className="flex items-center">
+            <h3 className="text-lg font-bold flex-1">Competency by discipline</h3>
+            <button onClick={() => onNavigate("simulator")} className="text-sm font-semibold text-accent hover:underline cursor-pointer">Practice</button>
+          </div>
+          <ul className="space-y-4">
+            {scored.map(d => (
+              <li key={d.id}>
+                <button onClick={() => onStartCase(d.id)} className="w-full text-left group cursor-pointer space-y-2">
+                  <div className="flex items-center">
+                    <span className="flex-1 text-sm font-semibold group-hover:text-accent transition-colors">{d.name}</span>
+                    <span className="font-mono text-sm font-medium text-ink-2">{d.score}%</span>
+                  </div>
+                  <ProgressBar pct={d.score} className={d.bar} />
+                </button>
+              </li>
+            ))}
+          </ul>
+        </section>
+      </div>
+
+      {/* Badges */}
+      <section className="card p-5 sm:p-6 space-y-5">
+        <div className="flex flex-wrap items-end justify-between gap-2">
+          <div>
+            <h3 className="text-lg font-bold">Discipline medals</h3>
+            <p className="text-sm text-ink-3 mt-0.5">Score {BADGE_SCORE}%+ on a {BADGE_MIN_QUESTIONS}+ question discipline exam to earn each medal.</p>
+          </div>
+          <span className="text-sm font-semibold text-xp">{medals.filter(b => progress.unlockedBadges.includes(b.id)).length} / {medals.length} earned</span>
+        </div>
+        <ul className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-3">
+          {medals.map((badge, i) => {
+            const earned = progress.unlockedBadges.includes(badge.id);
+            const discipline = DISCIPLINES.find(d => d.id === badge.category);
+            const best = discipline ? (progress[discipline.key] as number) || 0 : 0;
+            return (
+              <li key={badge.id}>
+                <button
+                  onClick={() => !earned && onStartCase(badge.category)}
+                  disabled={earned}
+                  title={earned ? badge.description : `${badge.requirement} — start an exam`}
+                  className={`group w-full h-full rounded-2xl border p-4 pt-6 flex flex-col items-center text-center gap-3 transition-colors ${
+                    earned ? "border-xp/40 bg-gradient-to-b from-xp/10 to-transparent cursor-default" : "border-line bg-surface-2 hover:border-accent/50"
+                  }`}
+                >
+                  <BadgeMedal category={badge.category} earned={earned} progress={best / BADGE_SCORE} size={84} spinKey={spinTick} spinDelay={i * 0.15} />
+                  <div className="space-y-1 mt-1">
+                    <p className={`text-sm font-bold leading-tight ${earned ? "text-ink" : "text-ink-2"}`}>{badge.name}</p>
+                    <p className="text-xs text-ink-3">{discipline?.name}</p>
+                  </div>
+                  {earned ? (
+                    <span className="mt-auto inline-flex items-center gap-1 rounded-full bg-xp/15 px-2.5 py-1 text-xs font-bold text-xp">
+                      <Check className="w-3.5 h-3.5" /> Earned
+                    </span>
+                  ) : (
+                    <span className="mt-auto w-full space-y-1.5">
+                      <span className="flex justify-between text-xs font-semibold">
+                        <span className="text-ink-3">Best {best}%</span>
+                        <span className="text-ink-2">{BADGE_SCORE}%</span>
+                      </span>
+                      <ProgressBar pct={(best / BADGE_SCORE) * 100} className="bg-accent" />
+                    </span>
+                  )}
+                </button>
+              </li>
+            );
+          })}
+        </ul>
+      </section>
+
+      {/* Topic badges */}
+      <section className="card p-5 sm:p-6 space-y-5">
+        <div className="flex flex-wrap items-end justify-between gap-2">
+          <div>
+            <h3 className="text-lg font-bold">Topic badges</h3>
+            <p className="text-sm text-ink-3 mt-0.5">Pass a single-topic exam ({TOPIC_BADGE_SCORE}%+ on {TOPIC_BADGE_MIN_QUESTIONS}+ questions) to earn its badge.</p>
+          </div>
+          <span className="text-sm font-semibold text-xp">{topicBadges.filter(b => progress.unlockedBadges.includes(b.id)).length} / {topicBadges.length} earned</span>
+        </div>
+        <div className="space-y-5">
+          {DISCIPLINES.map((d, di) => {
+            const badges = topicBadges.filter(b => b.category === d.id);
+            return (
+              <div key={d.id} className="space-y-2.5">
+                <div className="flex items-center gap-2">
+                  <d.icon className="w-4 h-4 text-ink-3" />
+                  <h4 className="text-sm font-bold text-ink-2">{d.name}</h4>
+                  <span className="text-xs text-ink-3">· {badges.filter(b => progress.unlockedBadges.includes(b.id)).length}/{badges.length}</span>
+                </div>
+                <ul className="grid grid-cols-3 sm:grid-cols-5 gap-2.5">
+                  {badges.map((badge, i) => {
+                    const earned = progress.unlockedBadges.includes(badge.id);
+                    const best = progress.topicScores?.[badge.topicId!];
+                    return (
+                      <li key={badge.id}>
+                        <button
+                          onClick={() => !earned && onStartCase(badge.topicId!)}
+                          disabled={earned}
+                          title={earned ? `${badge.name} — ${badge.description}` : `${badge.requirement} — start this topic exam`}
+                          className={`group w-full h-full rounded-xl border px-2 pt-4 pb-3 flex flex-col items-center text-center gap-2 transition-colors ${
+                            earned ? "border-xp/35 bg-gradient-to-b from-xp/8 to-transparent cursor-default" : "border-line bg-surface-2 hover:border-accent/50"
+                          }`}
+                        >
+                          <BadgeMedal
+                            category={badge.category}
+                            earned={earned}
+                            shape="coin"
+                            icon={TOPIC_ICONS[badge.topicId!]}
+                            progress={(best || 0) / TOPIC_BADGE_SCORE}
+                            size={60}
+                            spinKey={spinTick}
+                            spinDelay={0.8 + di * 0.25 + i * 0.08}
+                          />
+                          <span className={`mt-1 text-xs font-bold leading-tight ${earned ? "text-ink" : "text-ink-2"}`}>{badge.name}</span>
+                          <span className="text-[11px] leading-tight text-ink-3">
+                            {earned ? "Earned" : best !== undefined ? `Best ${best}%` : topicName(badge.topicId!)}
+                          </span>
+                        </button>
+                      </li>
+                    );
+                  })}
+                </ul>
+              </div>
+            );
+          })}
+        </div>
+      </section>
+    </div>
+  );
 }

@@ -1,27 +1,34 @@
 import React, { useState, useRef } from "react";
 import { StudyMaterial } from "../types";
-import { 
-  Upload, 
-  FileText, 
-  Image as ImageIcon, 
-  Trash2, 
-  Sparkles, 
-  Loader2, 
-  Check, 
-  AlertCircle, 
-  BookOpen, 
-  Info,
-  Layers,
-  Award
-} from "lucide-react";
+import { supabase, STUDY_BUCKET } from "../lib/supabase";
+import { apiFetch, apiError } from "../lib/api";
+import { Upload, FileText, Image as ImageIcon, Trash2, Loader2, AlertCircle, BookOpen, Sparkles } from "lucide-react";
+
+// Explicit content types: browsers report .md/.csv inconsistently, and the storage
+// bucket only accepts an allow-list of MIME types.
+const CONTENT_TYPES: Record<string, string> = {
+  pdf: "application/pdf",
+  docx: "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+  txt: "text/plain",
+  md: "text/markdown",
+  csv: "text/csv",
+  json: "application/json",
+  jpeg: "image/jpeg",
+  jpg: "image/jpeg",
+  png: "image/png",
+};
+
+const MAX_FILE_MB = 20;
 
 interface RAGStudyLibraryProps {
+  userId: string;
   studyMaterials: StudyMaterial[];
   onAddMaterial: (material: StudyMaterial) => void;
   onRemoveMaterial: (id: string) => void;
 }
 
 export default function RAGStudyLibrary({
+  userId,
   studyMaterials,
   onAddMaterial,
   onRemoveMaterial
@@ -66,76 +73,56 @@ export default function RAGStudyLibrary({
       return;
     }
 
-    if (file.size > 8 * 1024 * 1024) {
-      setErrorMsg("File exceeds the maximum 8MB size limit. Please upload a smaller study material.");
+    if (file.size > MAX_FILE_MB * 1024 * 1024) {
+      setErrorMsg(`File exceeds the maximum ${MAX_FILE_MB}MB size limit. Please upload a smaller study material.`);
       return;
     }
 
     setIsParsing(true);
     setUploadProgress(15);
 
+    const fileType = ["jpeg", "jpg", "png"].includes(ext) ? "image" : ext;
+    const safeName = file.name.replace(/[^a-zA-Z0-9._-]/g, "_");
+    const storagePath = `${userId}/${crypto.randomUUID()}-${safeName}`;
+
     try {
-      // 1. Read file as base64
-      const reader = new FileReader();
-      
-      const fileReadPromise = new Promise<{ base64: string; rawResult: string | ArrayBuffer | null }>((resolve, reject) => {
-        reader.onload = () => {
-          const resultStr = reader.result as string;
-          // Extract base64 part
-          const base64Str = resultStr.includes(";base64,") 
-            ? resultStr.split(";base64,")[1] 
-            : window.btoa(resultStr);
-          resolve({ base64: base64Str, rawResult: resultStr });
-        };
-        reader.onerror = (e) => reject(e);
-        
-        if (["jpeg", "jpg", "png"].includes(ext)) {
-          reader.readAsDataURL(file); // Images must have raw visual headers readable
-        } else {
-          reader.readAsDataURL(file); // Text / PDFs can also be read as Data URL for express parsing
-        }
-      });
+      // 1. Upload the original file straight to Supabase Storage. This bypasses the
+      //    serverless request-size cap, so large textbooks are fine.
+      const { error: uploadError } = await supabase.storage
+        .from(STUDY_BUCKET)
+        .upload(storagePath, file, { contentType: CONTENT_TYPES[ext], upsert: false });
+      if (uploadError) throw new Error(`Upload failed: ${uploadError.message}`);
 
-      setUploadProgress(40);
-      const { base64, rawResult } = await fileReadPromise;
-      setUploadProgress(65);
+      setUploadProgress(60);
 
-      // determine type
-      const fileType = ["jpeg", "jpg", "png"].includes(ext) ? "image" : ext;
-
-      // Send to server to parse
-      const response = await fetch("/api/parse-file", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          fileName: file.name,
-          fileType,
-          base64Data: base64
-        })
+      // 2. Ask the server to extract text and register the material.
+      const response = await apiFetch("/api/materials", {
+        fileName: file.name,
+        fileType,
+        fileSize: file.size,
+        storagePath
       });
 
       setUploadProgress(90);
 
       if (!response.ok) {
-        const errJson = await response.json();
-        throw new Error(errJson.error || "Failed to digest the clinical material.");
+        // Don't leave an orphaned file behind if parsing failed.
+        await supabase.storage.from(STUDY_BUCKET).remove([storagePath]);
+        throw await apiError(response, "Failed to digest the clinical material.");
       }
 
-      const outcome = await response.json();
-      
-      const newMaterial: StudyMaterial = {
-        id: `mat-${Date.now()}-${Math.floor(Math.random() * 1000)}`,
-        fileName: file.name,
-        fileType,
-        fileSize: file.size,
-        fullContent: fileType === "image" ? (rawResult as string) : outcome.extractedText,
-        summary: outcome.summary,
-        uploadedAt: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
-        pages: outcome.pageCount,
-        words: outcome.wordCount
-      };
-
-      onAddMaterial(newMaterial);
+      const { material } = await response.json();
+      onAddMaterial({
+        id: material.id,
+        fileName: material.file_name,
+        fileType: material.file_type,
+        fileSize: material.file_size,
+        storagePath: material.storage_path,
+        summary: material.summary,
+        uploadedAt: material.created_at,
+        pages: material.pages,
+        words: material.words
+      });
       setUploadProgress(100);
       
       // Flash a little success
@@ -162,34 +149,26 @@ export default function RAGStudyLibrary({
   };
 
   return (
-    <div className="bg-slate-900 border border-slate-800 rounded-xl p-5 space-y-4">
-      {/* Title block */}
-      <div className="flex items-center justify-between">
-        <div className="flex items-center gap-2">
-          <BookOpen className="w-5 h-5 text-teal-400" />
-          <h3 className="font-sans font-extrabold text-sm uppercase tracking-wider text-slate-100 flex items-center gap-1.5">
-            RAG Textbook Reference Library
-            <span className="text-[10px] font-mono bg-teal-500/10 text-teal-400 border border-teal-500/20 px-1.5 py-0.5 rounded font-normal normal-case">
-              {studyMaterials.length} loaded
-            </span>
-          </h3>
-        </div>
-        
-        <p className="text-[11px] text-slate-400 font-sans hidden sm:block">
-          Upload documents to ground your discussions with the AI Prof
+    <div className="space-y-6">
+      <div>
+        <h1 className="text-2xl sm:text-[28px] font-extrabold tracking-tight">Study Library</h1>
+        <p className="text-[15px] text-ink-2 mt-1">
+          Upload your notes and textbook chapters. The AI Professor and the Lab Simulator will base answers and cases on them.
         </p>
       </div>
 
-      {/* Drag & Drop Box */}
+      {/* Upload zone */}
       <div
         onDragOver={handleDragOver}
         onDragLeave={handleDragLeave}
         onDrop={handleDrop}
-        onClick={() => fileInputRef.current?.click()}
-        className={`border-2 border-dashed rounded-xl p-6 text-center transition-all cursor-pointer ${
-          isDragging 
-            ? "border-teal-400 bg-teal-950/10 text-teal-300" 
-            : "border-slate-800 hover:border-slate-700 bg-slate-950/40 hover:bg-slate-950/60 text-slate-350"
+        onClick={() => !isParsing && fileInputRef.current?.click()}
+        onKeyDown={e => { if ((e.key === "Enter" || e.key === " ") && !isParsing) { e.preventDefault(); fileInputRef.current?.click(); } }}
+        role="button"
+        tabIndex={0}
+        aria-label="Upload a study file"
+        className={`rounded-2xl border-2 border-dashed p-8 sm:p-10 text-center transition-colors cursor-pointer ${
+          isDragging ? "border-accent bg-accent/8" : "border-line bg-surface hover:border-ink-3"
         }`}
       >
         <input
@@ -199,128 +178,82 @@ export default function RAGStudyLibrary({
           className="hidden"
           accept=".pdf,.docx,.txt,.md,.csv,.json,.jpeg,.jpg,.png"
         />
-
         {isParsing ? (
-          <div className="flex flex-col items-center justify-center gap-2 py-4">
-            <Loader2 className="w-8 h-8 text-teal-400 animate-spin" />
-            <span className="text-xs font-mono text-slate-300 font-bold">
-              DIgESTING CLINICAL SOURCE...
-            </span>
+          <div className="flex flex-col items-center gap-3" aria-live="polite">
+            <Loader2 className="w-8 h-8 text-accent animate-spin" />
+            <p className="text-[15px] font-semibold">Reading your file…</p>
             {uploadProgress !== null && (
-              <div className="w-48 bg-slate-850 h-1.5 rounded-full overflow-hidden mt-1 border border-slate-800">
-                <div 
-                  className="bg-teal-400 h-full transition-all duration-300 rounded-full" 
-                  style={{ width: `${uploadProgress}%` }}
-                />
+              <div className="w-56 h-1.5 rounded-full bg-surface-2 overflow-hidden">
+                <div className="h-full bg-accent rounded-full transition-all duration-300" style={{ width: `${uploadProgress}%` }} />
               </div>
             )}
-            <p className="text-[10px] text-slate-450 font-sans">
-              Extracting medical terminology via parsing engine...
-            </p>
           </div>
         ) : (
-          <div className="space-y-2 py-2">
-            <div className="mx-auto w-10 h-10 rounded-lg bg-slate-900 border border-slate-800 flex items-center justify-center text-slate-300 shadow-inner group-hover:text-teal-400">
-              <Upload className="w-5 h-5" />
-            </div>
-            <div>
-              <p className="text-xs font-bold font-sans text-slate-205">
-                Drag & drop or <span className="text-teal-400 underline">browse files</span>
-              </p>
-              <p className="text-[10px] text-slate-400 mt-1 font-sans">
-                Supports **PDF, DOCX, TXT, MD, CSV, JSON** and **JPEG, JPG, PNG** (Max 8MB)
-              </p>
-            </div>
+          <div className="flex flex-col items-center gap-3">
+            <span className="h-12 w-12 rounded-xl bg-accent/14 flex items-center justify-center">
+              <Upload className="w-6 h-6 text-accent" />
+            </span>
+            <p className="text-[15px] font-semibold">
+              Drag a file here or <span className="text-accent underline underline-offset-2">browse</span>
+            </p>
+            <p className="text-sm text-ink-3">PDF, Word, text, Markdown, CSV, JSON or images · up to {MAX_FILE_MB} MB</p>
           </div>
         )}
       </div>
 
-      {/* Error Messaging */}
       {errorMsg && (
-        <div className="bg-rose-500/10 border border-rose-500/20 rounded-lg p-3 flex gap-2 items-start text-xs text-rose-300 animate-fadeIn">
-          <AlertCircle className="w-4 h-4 flex-shrink-0 mt-0.5" />
-          <div className="space-y-1">
-            <p className="font-bold">Parsing Error</p>
-            <p className="font-sans leading-relaxed text-rose-400/90">{errorMsg}</p>
+        <div className="rounded-xl border border-critical/40 bg-critical/10 p-4 flex gap-2.5 text-sm" role="alert">
+          <AlertCircle className="w-4 h-4 text-critical shrink-0 mt-0.5" />
+          <div>
+            <p className="font-bold text-critical">Upload failed</p>
+            <p className="text-ink-2 mt-0.5">{errorMsg}</p>
           </div>
         </div>
       )}
 
-      {/* Active References Shelf */}
-      {studyMaterials.length > 0 && (
-        <div className="space-y-2.5">
-          <span className="text-[10px] font-mono text-slate-500 font-bold uppercase tracking-wider block">
-            Active Study References ({studyMaterials.length})
-          </span>
-
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5 max-h-[170px] overflow-y-auto pr-1">
-            {studyMaterials.map((material) => {
+      {/* Files */}
+      {studyMaterials.length > 0 ? (
+        <section className="space-y-3">
+          <div className="flex items-center">
+            <h2 className="flex-1 text-lg font-bold">Your files</h2>
+            <span className="text-sm text-ink-3">{studyMaterials.length} file{studyMaterials.length === 1 ? "" : "s"}</span>
+          </div>
+          <ul className="grid grid-cols-1 md:grid-cols-2 gap-3">
+            {studyMaterials.map(material => {
               const isImg = material.fileType === "image";
               return (
-                <div 
-                  key={material.id}
-                  className="bg-slate-950 border border-slate-850/90 rounded-xl p-3 flex gap-3 items-start justify-between hover:border-slate-800 transition-all group relative animate-fadeIn"
-                >
-                  <div className="flex gap-2 items-start overflow-hidden">
-                    <div className={`mt-0.5 p-1.5 rounded-lg border ${
-                      isImg 
-                        ? "bg-amber-500/10 border-amber-500/20 text-amber-400" 
-                        : "bg-teal-500/10 border-teal-500/20 text-teal-400"
-                    }`}>
-                      {isImg ? <ImageIcon className="w-3.5 h-3.5" /> : <FileText className="w-3.5 h-3.5" />}
-                    </div>
-
-                    <div className="text-left space-y-0.5 overflow-hidden">
-                      <p className="text-xs font-bold text-slate-200 truncate pr-4 font-sans leading-tight">
-                        {material.fileName}
-                      </p>
-                      <div className="flex items-center gap-2 text-[9px] font-mono text-slate-400">
-                        <span className="uppercase font-extrabold text-teal-400">
-                          {material.fileType}
-                        </span>
-                        <span>•</span>
-                        <span>{getFormatBytes(material.fileSize)}</span>
-                        {!isImg && material.words && (
-                          <>
-                            <span>•</span>
-                            <span className="text-slate-300">{material.words} words</span>
-                          </>
-                        )}
-                      </div>
-                      
-                      {/* Short summary snippet */}
-                      <p className="text-[9.5px] text-slate-450 truncate font-sans py-0.5">
-                        {material.summary}
-                      </p>
-                    </div>
+                <li key={material.id} className="card p-4 flex items-start gap-3.5 animate-fadeIn">
+                  <span className={`h-10 w-10 shrink-0 rounded-xl flex items-center justify-center ${isImg ? "bg-violet/14 text-violet" : "bg-accent/14 text-accent"}`}>
+                    {isImg ? <ImageIcon className="w-5 h-5" /> : <FileText className="w-5 h-5" />}
+                  </span>
+                  <div className="flex-1 min-w-0">
+                    <p className="text-sm font-bold truncate">{material.fileName}</p>
+                    <p className="text-xs text-ink-3 mt-0.5">
+                      <span className="uppercase font-bold">{material.fileType}</span> · {getFormatBytes(material.fileSize)}
+                      {!isImg && material.words ? ` · ${material.words.toLocaleString()} words` : ""}
+                    </p>
+                    {material.summary && <p className="text-sm text-ink-2 mt-2 line-clamp-2">{material.summary}</p>}
                   </div>
-
                   <button
-                    onClick={() => onRemoveMaterial(material.id)}
-                    className="p-1.5 rounded-lg text-slate-500 hover:text-rose-400 hover:bg-slate-900 cursor-pointer flex-shrink-0 self-center opacity-70 group-hover:opacity-100 transition-opacity"
-                    title="Remove reference"
+                    onClick={() => { if (confirm(`Remove "${material.fileName}" from your library?`)) onRemoveMaterial(material.id); }}
+                    className="p-2 rounded-lg text-ink-3 hover:text-critical hover:bg-critical/10 cursor-pointer"
+                    aria-label={`Remove ${material.fileName}`}
                   >
-                    <Trash2 className="w-3.5 h-3.5" />
+                    <Trash2 className="w-4 h-4" />
                   </button>
-                </div>
+                </li>
               );
             })}
-          </div>
-
-          <div className="flex items-center gap-1.5 text-[10px] bg-slate-950 px-3 py-2 rounded-lg border border-slate-850 text-slate-400 justify-center">
-            <Sparkles className="w-3 h-3 text-teal-400 animate-pulse" />
-            <span className="font-sans">AI Prof automatically matches active terms to teach you with cited precision.</span>
-          </div>
-        </div>
-      )}
-
-      {studyMaterials.length === 0 && (
-        <div className="border border-dashed border-slate-800/80 rounded-xl p-5 text-center bg-slate-950/20 text-xs text-slate-450 py-7">
-          <Info className="w-5 h-5 mx-auto text-slate-600 mb-2" />
-          <p className="font-sans">No Reference Literature Uploaded.</p>
-          <p className="text-[10px] mt-1 text-slate-500">
-            Upload custom textbook excerpts to chat interactively and generate bespoke medical training cases!
+          </ul>
+          <p className="flex items-center gap-2 text-sm text-ink-3">
+            <Sparkles className="w-4 h-4 text-accent" /> The Professor cites file names when it uses them in an answer.
           </p>
+        </section>
+      ) : (
+        <div className="card p-8 text-center space-y-2">
+          <BookOpen className="w-6 h-6 text-ink-3 mx-auto" />
+          <p className="text-[15px] font-semibold">No files yet</p>
+          <p className="text-sm text-ink-3 max-w-md mx-auto">Add lecture notes or a textbook chapter to get answers and practice cases tailored to your course.</p>
         </div>
       )}
     </div>
