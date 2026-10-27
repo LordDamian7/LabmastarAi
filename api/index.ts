@@ -170,6 +170,33 @@ function getGeminiClient(): GoogleGenAI {
   return aiInstance;
 }
 
+// Models to try in order. Gemini sometimes answers 503 "high demand" (or 429)
+// for a while; we retry once, then move on to the next model instead of
+// dropping straight to the offline content. GEMINI_MODEL overrides the first.
+const MODEL_CHAIN = [...new Set([process.env.GEMINI_MODEL, "gemini-3.5-flash", "gemini-flash-latest", "gemini-2.5-flash"].filter(Boolean) as string[])];
+
+const errorText = (e: any) => `${e?.status ?? ""} ${e?.code ?? ""} ${e?.message ?? ""}`;
+const isBusyError = (e: any) => /\b(429|500|503|504)\b|UNAVAILABLE|RESOURCE_EXHAUSTED|overloaded|high demand/i.test(errorText(e));
+const isMissingModel = (e: any) => /\b404\b|NOT_FOUND|not found for API version|is not supported/i.test(errorText(e));
+
+async function withModelFallback<T>(run: (model: string) => Promise<T>): Promise<T> {
+  let lastError: unknown;
+  for (const model of MODEL_CHAIN) {
+    for (let attempt = 0; attempt < 2; attempt++) {
+      try {
+        return await run(model);
+      } catch (e: any) {
+        lastError = e;
+        if (isMissingModel(e)) break;
+        if (!isBusyError(e)) throw e;
+        if (attempt === 0) await new Promise(r => setTimeout(r, 700));
+      }
+    }
+    console.warn(`Gemini model ${model} unavailable, trying the next one.`);
+  }
+  throw lastError;
+}
+
 // Check if Gemini is fully operational
 app.get("/api/status", (req, res) => {
   const hasKey = !!process.env.GEMINI_API_KEY && process.env.GEMINI_API_KEY !== "MY_GEMINI_API_KEY";
@@ -348,13 +375,19 @@ Guidelines:
         return { role, parts };
       });
 
-      const stream = await client.models.generateContentStream({
-        model: "gemini-3.5-flash",
-        contents: contents,
-        config: {
-          systemInstruction: finalSystemPrompt,
-          temperature: 0.7,
-        }
+      // Pull the first chunk inside the fallback so a busy model can still be
+      // swapped out before anything has been sent to the browser.
+      const { iterator, first } = await withModelFallback(async model => {
+        const stream = await client.models.generateContentStream({
+          model,
+          contents: contents,
+          config: {
+            systemInstruction: finalSystemPrompt,
+            temperature: 0.7,
+          }
+        });
+        const iterator = stream[Symbol.asyncIterator]();
+        return { iterator, first: await iterator.next() };
       });
 
       res.setHeader("Content-Type", "text/plain; charset=utf-8");
@@ -362,8 +395,8 @@ Guidelines:
       res.setHeader("X-Accel-Buffering", "no");
       let wroteAny = false;
       try {
-        for await (const chunk of stream) {
-          const text = chunk.text;
+        for (let step = first; !step.done; step = await iterator.next()) {
+          const text = step.value.text;
           if (text) {
             res.write(text);
             wroteAny = true;
@@ -457,6 +490,11 @@ Welcome to your Clinical Lab Science workstation! I am ready to guide you or tea
 3. Generate simulation cases dynamically by clicking **Lab Specimen Simulator**!`;
       }
 
+      const notice = isBusyError(apiError)
+        ? "> ⚠️ **Offline answer** — Gemini is very busy right now, so this is a built-in reply. Ask again in a minute for a full answer.\n\n"
+        : "> ⚠️ **Offline answer** — the AI model couldn't be reached, so this is a built-in reply.\n\n";
+      responseText = notice + responseText;
+
       // Same plain-text format as the live stream, delivered in one piece.
       res.setHeader("Content-Type", "text/plain; charset=utf-8");
       res.setHeader("X-LabMaster-Simulation", "1");
@@ -534,8 +572,8 @@ Rules:
 Base as many questions as possible on these excerpts from the student's study files:
 ${ragContext}` : ""}`;
 
-      const response = await client.models.generateContent({
-        model: "gemini-3.5-flash",
+      const response = await withModelFallback(model => client.models.generateContent({
+        model,
         contents: prompt,
         config: {
           responseMimeType: "application/json",
@@ -573,7 +611,7 @@ ${ragContext}` : ""}`;
             required: ["questions"]
           }
         }
-      });
+      }));
 
       const parsed = JSON.parse((response.text || "{}").trim());
       const seen = new Set(avoid.map(stemKey));
